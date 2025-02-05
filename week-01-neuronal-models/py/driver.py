@@ -12,10 +12,20 @@ def main(ini_cond:list[float],
     # Applied current function - start with no applied current
     # will be vectorized so get the applied current for every timestep straight away
     
-    # Current Applied every 10 seconds
+    # Current Applied function I(t) =  ...
     # Current injection entirely determines response of the system
-    IAppliedF = lambda t: 50 if round(t) % 10 == 0 else 0
-    
+    # IAppliedF = lambda t: 25 if round(t) % 8 == 0 else 0 # regular current injections
+    # IAppliedF = lambda t: 2 if round(t) in (16,17,18) else 0 # subthreshold injection, graded response
+    # IAppliedF = lambda t: 10 if round(t) in (16,17,18) else 0 # suprathreshold injection - AP
+    # IAppliedF = lambda t: 10 if round(t) < 110 and round(t) > 25 else 0 # supratheshold sustained
+    # IAppliedF = lambda t: 50 if round(t) < 110 and round(t) > 25 else 0 # sustained varying intensity
+
+    # Revisiting spike mechanism
+    IAppliedF = lambda t: 25 if round(t) >= 9 and round(t) <= 11 else 0 # suprathreshold injection - AP
+    # TODO: finish revisiting spike mechanism plots
+    # TODO: window current plot y = Nav activation(V) & Nav inactivation(V) x = V
+
+
     # HH results - create a function that will take the time and current state and compute HH
     # Right-hand side of du/dt equation. as in: du/dt = f(*u, t)
     # by using this, we just turned it into a function with just t and u variables!
@@ -33,10 +43,13 @@ def main(ini_cond:list[float],
     voltage, n_act, m_act, h_act  = solution.y
     applied_current = [IAppliedF(tm) for tm in ts]
     
-    fig, axes = plt.subplots(nrows=3, ncols=1, figsize = (12, 6))
+    fig, axes = plt.subplots(nrows=4, ncols=1, figsize = (12, 8))
     
     # Voltage plot
-    axes[0].plot(ts, voltage)
+    axes[0].plot(ts, voltage, color = 'k')
+    axes[0].plot(ts, np.full(ts.shape, params[-4]), color = 'b', label = 'Ena')
+    axes[0].plot(ts, np.full(ts.shape, params[-3]), color = 'r', label = 'Ek')
+    axes[0].legend(loc = 4)
     axes[0].set_ylabel('Membrane Voltage [mV]')
     
     # Activation & Inactivation variables
@@ -46,10 +59,13 @@ def main(ini_cond:list[float],
     axes[1].set_ylabel('Activation variables')
     axes[1].legend(loc = 4)
 
-    # Applied Current 
-    axes[2].plot(ts, applied_current)
-    axes[2].set_ylabel('I_Applied [µA / cm^2]')
-    axes[2].set_xlabel('Time [ms]')
+    # Conductances as function of time gKt, gNat
+    axes[2].plot(ts, ...)
+
+    # Applied Current & IK & INa
+    axes[-1].plot(ts, applied_current)
+    axes[-1].set_ylabel('I_Applied [µA / cm^2]')
+    axes[-1].set_xlabel('Time [ms]')
     
     plt.tight_layout()
     plt.savefig('HodgkinHuxley-Neuron.png', dpi = 200)
@@ -71,7 +87,7 @@ def parse_args():
                         default= 3**((20 - 6.3) / 10))
     
     # Initial Conditions
-    parser.add_argument('-v', type=float, help= 'membrane voltage', default= -60)
+    parser.add_argument('-vm', type=float, help= 'membrane voltage', default= -60)
     parser.add_argument('-act_n', type=float, help= 'Kv activation gate (n)', default= 0)
     parser.add_argument('-act_m', type=float, help= 'Nav activation gate (m)', default= 0)
     parser.add_argument('-inact_h', type=float, help= 'Nav inactivation gate (h)', default= 0)
@@ -84,7 +100,7 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
 
-    state = [args.v, args.act_n, args.act_m, args.inact_h]
+    state = [args.vm, args.act_n, args.act_m, args.inact_h]
     model_params = [args.cm, args.gna, args.gk, args.gl, args.ena, args.ek, args.el, args.phi]
 
     main(ini_cond=state, params= model_params, duration=args.time)

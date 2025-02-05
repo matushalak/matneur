@@ -7,9 +7,10 @@ def HodgkinHuxley(
         # these params determine the behavior of the model
         params:list[float],
         # function that determines the applied current I based on the timepoint (t)
-        Ifunc:callable
-        # returns du/dt with u containing state variables u = [v, n, m, h]
-        ) -> ndarray:
+        Ifunc:callable,
+        # return currents & conductances
+        ret_I_g:bool = False
+        ) -> ndarray: # returns du/dt with u containing state variables u = [v, n, m, h]
     
     # v (voltage), n (activation gate Kv), m (activation gate Nav), h (inactivation gate Nav)
     v, n, m, h = variables
@@ -27,6 +28,11 @@ def HodgkinHuxley(
     IL = - gL * (v - eL)
     # Applied current at time t
     I_applied = Ifunc(t)
+
+    if ret_I_g:
+        gKt = abs(- IK * (n**4) * (v - eK))
+        gNat = abs(- INa * (m**3) * h * (v - eNa))
+        return [IK, INa, gKt, gNat]
 
     # Activation & Inactivation functions  (parameters set by Hodkin & Huxley)
     # for the next timestep update in activation states 
