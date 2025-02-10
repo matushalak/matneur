@@ -29,10 +29,11 @@ def HodgkinHuxley(
     # Applied current at time t
     I_applied = Ifunc(t)
 
+    # instantaneous conductances are given by gating variables as proportions of maximum conductances
     if ret_I_g:
-        gKt = abs(- IK * (n**4) * (v - eK))
-        gNat = abs(- INa * (m**3) * h * (v - eNa))
-        return [IK, INa, gKt, gNat]
+        gKt = gK * (n**4)
+        gNat = gNa * ((m**3) * h )
+        return array([IK, INa, gKt, gNat])
 
     # Activation & Inactivation functions  (parameters set by Hodkin & Huxley)
     # for the next timestep update in activation states 

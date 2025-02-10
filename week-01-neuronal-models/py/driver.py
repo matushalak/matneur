@@ -14,18 +14,15 @@ def main(ini_cond:list[float],
     
     # Current Applied function I(t) =  ...
     # Current injection entirely determines response of the system
-    # IAppliedF = lambda t: 25 if round(t) % 8 == 0 else 0 # regular current injections
+    IAppliedF = lambda t: 25 if round(t) % 8 == 0 else 0 # regular current injections
     # IAppliedF = lambda t: 2 if round(t) in (16,17,18) else 0 # subthreshold injection, graded response
     # IAppliedF = lambda t: 10 if round(t) in (16,17,18) else 0 # suprathreshold injection - AP
     # IAppliedF = lambda t: 10 if round(t) < 110 and round(t) > 25 else 0 # supratheshold sustained
     # IAppliedF = lambda t: 50 if round(t) < 110 and round(t) > 25 else 0 # sustained varying intensity
 
     # Revisiting spike mechanism
-    IAppliedF = lambda t: 25 if round(t) >= 9 and round(t) <= 11 else 0 # suprathreshold injection - AP
-    # TODO: finish revisiting spike mechanism plots
-    # TODO: window current plot y = Nav activation(V) & Nav inactivation(V) x = V
-
-
+    # IAppliedF = lambda t: 25 if round(t) >= 9 and round(t) <= 11 else 0 # suprathreshold injection - AP
+    
     # HH results - create a function that will take the time and current state and compute HH
     # Right-hand side of du/dt equation. as in: du/dt = f(*u, t)
     # by using this, we just turned it into a function with just t and u variables!
@@ -43,7 +40,14 @@ def main(ini_cond:list[float],
     voltage, n_act, m_act, h_act  = solution.y
     applied_current = [IAppliedF(tm) for tm in ts]
     
-    fig, axes = plt.subplots(nrows=4, ncols=1, figsize = (12, 8))
+    # Revisiting spike mechanism
+    results = np.zeros((4,ts.size))
+    for i, (t, v, n, m, h) in enumerate(zip(ts, voltage, n_act, m_act, h_act)):
+        results[:,i] = HodgkinHuxley(t, variables=[v,n,m,h], params=params, Ifunc = IAppliedF, ret_I_g=True)
+    
+    IKs, INas, gKt, gNat = results
+
+    fig, axes = plt.subplots(nrows=4, ncols=1, figsize = (12, 10))
     
     # Voltage plot
     axes[0].plot(ts, voltage, color = 'k')
@@ -53,22 +57,65 @@ def main(ini_cond:list[float],
     axes[0].set_ylabel('Membrane Voltage [mV]')
     
     # Activation & Inactivation variables
-    axes[1].plot(ts, n_act, label= 'Kv act (n)')
-    axes[1].plot(ts, m_act, label = 'Nav act (m)')
-    axes[1].plot(ts, h_act, label = 'Nav inact (h)')
+    axes[1].plot(ts, n_act, label= 'Kv act (n)', color = 'r')
+    axes[1].plot(ts, m_act, label = 'Nav act (m)', color = 'b')
+    axes[1].plot(ts, h_act, label = 'Nav inact (h)', color = 'g')
     axes[1].set_ylabel('Activation variables')
     axes[1].legend(loc = 4)
 
     # Conductances as function of time gKt, gNat
-    axes[2].plot(ts, ...)
+    axes[2].plot(ts, gKt, label = 'K Conductance', color= 'r')
+    axes[2].plot(ts, gNat, label = 'Na Conductance', color = 'b')
+    axes[2].set_ylabel('Conductance (g) - A.U.')
+    axes[2].legend(loc=4)
 
     # Applied Current & IK & INa
-    axes[-1].plot(ts, applied_current)
+    axes[-1].plot(ts, applied_current, label = 'applied', color = 'k')
+    axes[-1].plot(ts, INas, label = 'I_Na', color = 'b')
+    axes[-1].plot(ts, IKs, label = 'I_K', color = 'r')
     axes[-1].set_ylabel('I_Applied [µA / cm^2]')
     axes[-1].set_xlabel('Time [ms]')
+    axes[-1].legend(loc=4)
     
     plt.tight_layout()
     plt.savefig('HodgkinHuxley-Neuron.png', dpi = 200)
+    plt.show()
+    plt.close()
+
+
+    # BONUS: Window Current plot
+    # Activation variables as function of voltage (range -90 : 80)
+    volt_range = np.linspace(-100, 0, 50)
+
+    # Nav activation (m)
+    alpha_m = lambda v : 0.1 * (v + 40)/(1 - np.exp(-(v + 40)/10))
+    am = np.array([alpha_m(mV) for mV in volt_range])
+    beta_m  = lambda v : 4 * np.exp(-(v + 65)/18)
+    bm = np.array([beta_m(mV) for mV in volt_range])
+    m_inf = am / (am + bm)
+
+    # Nav INactivation (h)
+    alpha_h = lambda v : 0.07 * np.exp(-(v + 65)/20)
+    ah = np.array([alpha_h(mV) for mV in volt_range])
+    beta_h  = lambda v : 1/(1 + np.exp(-(v + 35)/10))
+    bh = np.array([beta_h(mV) for mV in volt_range])
+    h_inf = ah / (ah + bh)
+
+    # Kv activation (n)
+    alpha_n = lambda v: 0.01 * (v + 55)/(1 - np.exp(-(v + 55)/10))
+    an = np.array([alpha_n(mV) for mV in volt_range])
+    beta_n  = lambda v: 0.125 * np.exp(-(v + 65)/80)
+    bn = np.array([beta_n(mV) for mV in volt_range])
+    n_inf = an / (an + bn)
+
+    plt.plot(volt_range, m_inf, marker = 'o', label = 'm_inf(V) [Nav act]', color = 'b')
+    plt.plot(volt_range, h_inf, marker = 'o', label = 'h_inf(V) [Nav inact]', color = 'g')
+    plt.plot(volt_range, n_inf, marker = 'o', label = 'n_inf(V) [Kv act]', color = 'r', alpha = 0.2)
+    plt.legend(loc = 5)
+    plt.xlabel('Voltage (mV)')
+    plt.ylabel('(In)Activation State')
+    plt.tight_layout()
+    plt.savefig('Window Current')
     plt.show()
 
 # Command-line arguments to modify behavior of simulation
