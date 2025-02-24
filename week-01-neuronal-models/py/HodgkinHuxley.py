@@ -1,5 +1,6 @@
 from numpy import exp, zeros, array, ndarray
 
+# 4D Dynamical System
 def HodgkinHuxley(
         t:float, # time
         # these are the (state determining) variables that are solved for
@@ -61,8 +62,7 @@ def HodgkinHuxley(
     # Nav INactivation (h)
     dhdt = phi * ((alpha_h * (1-h)) - (beta_h * h))
 
-    # breakpoint()
-
+    # 4D Dynamical System
     return array([dvdt,
                   dndt,
                   dmdt,

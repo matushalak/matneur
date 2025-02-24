@@ -14,10 +14,10 @@ def main(ini_cond:list[float],
     
     # Current Applied function I(t) =  ...
     # Current injection entirely determines response of the system
-    IAppliedF = lambda t: 25 if round(t) % 8 == 0 else 0 # regular current injections
+    # IAppliedF = lambda t: 25 if round(t) % 8 == 0 else 0 # regular current injections
     # IAppliedF = lambda t: 2 if round(t) in (16,17,18) else 0 # subthreshold injection, graded response
     # IAppliedF = lambda t: 10 if round(t) in (16,17,18) else 0 # suprathreshold injection - AP
-    # IAppliedF = lambda t: 10 if round(t) < 110 and round(t) > 25 else 0 # supratheshold sustained
+    IAppliedF = lambda t: 10 if round(t) < 110 and round(t) > 25 else 0 # supratheshold sustained
     # IAppliedF = lambda t: 50 if round(t) < 110 and round(t) > 25 else 0 # sustained varying intensity
 
     # Revisiting spike mechanism
@@ -79,7 +79,7 @@ def main(ini_cond:list[float],
     
     plt.tight_layout()
     plt.savefig('HodgkinHuxley-Neuron.png', dpi = 200)
-    plt.show()
+    # plt.show()
     plt.close()
 
 
@@ -116,7 +116,26 @@ def main(ini_cond:list[float],
     plt.ylabel('(In)Activation State')
     plt.tight_layout()
     plt.savefig('Window Current')
-    plt.show()
+    # plt.show()
+    plt.close()
+
+    # FOLLOW-UP: Voltage against dv/dt
+    dvdts = [v2 - v1 for v2, v1 in zip(voltage[1:], voltage)]
+    vs = voltage[:-1]
+    tss = ts[:-1]
+
+    fig, ax = plt.subplots()
+    ax.plot(vs, dvdts, color='gray', linewidth=0.5, alpha=0.3)  # Thin gray line
+    sc = ax.scatter(vs, dvdts, c=tss, cmap='viridis', s = 2,alpha = 0.6)  # `c` for color mapping
+    
+    cbar = plt.colorbar(sc)
+    cbar.set_label('Time (s)')
+
+    ax.set_xlabel('Voltage (mV)')
+    ax.set_ylabel('dv/dt')
+    plt.tight_layout()
+    plt.savefig('V-dvdt.png',dpi=400)
+    plt.close()
 
 # Command-line arguments to modify behavior of simulation
 def parse_args():
