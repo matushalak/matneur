@@ -1,16 +1,23 @@
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-from numpy import arange, roots, linspace, meshgrid, array, sign, zeros_like, sqrt
+from numpy import arange, roots, linspace, meshgrid, array, sign, zeros_like, ndarray, stack, append
+from numpy.random import uniform
 from scipy.integrate import solve_ivp
+import os
 
 def phase_portrait(voltage_min:float = -2.1, voltage_max:float = 1.9, voltage_step:float = 0.01,
-                   trajectories:bool | list[list[float], list[float]] = array([])):
+                   trajectories:bool | ndarray = array([])):
+    '''
+    Universal function used a lot to calculate plot the phase portrait with vector field, as well as, nullclines and solution trajectories of HRM
+    '''
+    # HRM equations
     fv = lambda v : -v**3 + 3*v**2 
     gv = lambda v : 5*v**2 - 1
 
     dvdt = lambda v, r, I = 0 : -v**3 + 3*v**2 - r + I
     drdt = lambda v, r : 5*v**2 - 1 - r
 
+    # setup
     voltages = arange(voltage_min, voltage_max + voltage_step, voltage_step)
     # vectorized
     r_nullcline = gv(voltages)
@@ -18,17 +25,17 @@ def phase_portrait(voltage_min:float = -2.1, voltage_max:float = 1.9, voltage_st
     fming = fv(voltages) - gv(voltages)
 
     # Assemble vector field
-    n_vectors = 50
-    xv = linspace(min(voltages), max(voltages), n_vectors)
-    yr = linspace(min([*r_nullcline,*v_nullcline]), 
-                    max([*r_nullcline,*v_nullcline]), n_vectors)
+    n_vectors = 100
+    xv = linspace(min(voltages)-0.5, max(voltages)+0.5, n_vectors)
+    yr = linspace(min([*r_nullcline,*v_nullcline])-3, 
+                    max([*r_nullcline,*v_nullcline])+2, n_vectors)
 
     # all of these are 100 x 100 arrays
     XV, YR = meshgrid(xv, yr)
     DVDT = array([[dvdt(v = x, r = y) for x, y in zip(rows, cols)] for rows, cols in zip(XV, YR)])
     DRDT = array([[drdt(v = x, r = y) for x, y in zip(rows, cols)] for rows, cols in zip(XV, YR)])
 
-    quadrant = (sign(DVDT) > 0).astype(int) + 2 * (sign(DRDT) > 0).astype(int)
+    quadrant = (sign(DVDT) > 0).astype(int) + 2 * (sign(DRDT) > 0).astype(int) # colors give interpretability to different areas of phase plane
     custom_cmap = ListedColormap(['lightcoral', 'blue', 'gold', 'limegreen'])
 
     # PLOT
@@ -38,8 +45,8 @@ def phase_portrait(voltage_min:float = -2.1, voltage_max:float = 1.9, voltage_st
     equilibria_r = gv(equilibria_v)
     eq_labs = ['E1', 'E2', 'E3']
 
-    ax.plot(voltages, v_nullcline, label = 'v nullcline', color = 'deeppink')
-    ax.plot(voltages, r_nullcline, label = 'r nullcline', color =  'saddlebrown')
+    ax.plot(voltages, v_nullcline, label = 'v nullcline', color = 'deeppink', zorder = 0)
+    ax.plot(voltages, r_nullcline, label = 'r nullcline', color =  'saddlebrown', zorder = 0)
     # ax.plot(voltages, fming, color = 'green') # f(v) - g(v)
     for i, lab in enumerate(eq_labs):
         ax.annotate(lab, 
@@ -47,39 +54,21 @@ def phase_portrait(voltage_min:float = -2.1, voltage_max:float = 1.9, voltage_st
             fontsize = 12, fontweight = 'bold',
             bbox=dict(facecolor='white', edgecolor='none', pad=2, alpha = 0.5)
             )
-    ax.scatter(equilibria_v, equilibria_r, color = 'k', label = 'Equilibria of HRM')
+    ax.scatter(equilibria_v, equilibria_r, color = 'k', label = 'Equilibria of HRM', zorder = 1)
 
+    # SOLUTION trajectories
     if trajectories.size > 0:
-        ax.plot(trajectories[0,:], trajectories[1,:], alpha = 0.7, color = 'blue', zorder = 1)
+        for tr in range(trajectories.shape[1]):
+            ax.plot(trajectories[0,tr,:], trajectories[1,tr,:], alpha = 0.9, zorder = 2, linestyle = ':')
+            ax.scatter(trajectories[0,tr,0], trajectories[1,tr,0], marker = '*')
 
-
-        # gymnastics to get rid of arrow tails
-        u = v = 2
-        length = sqrt(u**2 + v**2)
-        width=0.008
-        hal = hl = 1.0 / width * length
-
-        # normalize vectors to have constant size
-        U, V = trajectories[2,:], trajectories[3,:]
-        U = U / sqrt(U**2 + V**2)
-        V = V / sqrt(U**2 + V**2)
-
-        mask = zeros_like(U)
-        mask[::1] = 1
-        ax.quiver(trajectories[0,:] * mask,
-                  trajectories[1,:] * mask,
-                  U * mask,
-                  V * mask,
-                  pivot='tail', angles='xy', scale_units='xy', scale=15,
-                  headaxislength=hal, headlength=hl,headwidth=hl, width = width,
-                  zorder = 2, color = 'blue')
-        
+        # background vector field
         ax.quiver(XV, YR, DVDT, DRDT, quadrant, 
             cmap = custom_cmap, 
-            pivot = 'tip',angles='xy',width=0.002, zorder = 0, alpha = 0.6)
+            pivot = 'tip',angles='xy',width=0.0025, zorder = 0, alpha = 0.4)
         
         plt.xlim([trajectories[0,:].min() - 0.5, trajectories[0,:].max() + 0.5])
-        plt.ylim([trajectories[1,:].min() - 0.5, trajectories[1,:].max() + 0.5])
+        plt.ylim([trajectories[1,:].min() - 3, trajectories[1,:].max() + 2])
 
         ax.legend(loc = 1, framealpha = 0.9)
 
@@ -95,13 +84,18 @@ def phase_portrait(voltage_min:float = -2.1, voltage_max:float = 1.9, voltage_st
     ax.set_ylabel('r')
     
     plt.tight_layout()
-    title =  'trajectories.png' if trajectories.size > 0 else f'HRM phase plane_{round(min(voltages), 2)}:{round(max(voltages), 2)}.png'
-    plt.savefig(title, dpi = 200)
+    if trajectories.size > 0:
+        traj_name = f'trajectories_{sum(file.startswith("trajectories") for file in os.listdir())}.png'
+    title =  traj_name if trajectories.size > 0 else f'HRM phase plane_{round(min(voltages), 2)}:{round(max(voltages), 2)}.png'
+    plt.savefig(title, dpi = 300)
     plt.show()
     plt.close()
 
 
 def jacobian(v:float = False):
+    '''
+    Calculates and plots the roots of the trace and determinant of the Jacobian of HRM
+    '''
     if v:
         J = array([-3*(v**2) + 6*v, -1],
                 [10*v, -1])
@@ -116,11 +110,13 @@ def jacobian(v:float = False):
     trace = tr(voltages)
     determinant = det(voltages)
     
+    # cool function to calculate roots of polynomials!
     tr_roots = roots([-3, 6, -1])
     det_roots = roots([3, 4, 0])
     tr_r_lab = [r'$1 + \sqrt{2/3}$', r'$1 - \sqrt{2/3}$']
     det_r_lab = ['-4/3', '0']
 
+    # plot characterizing the Jacobian of HRM based on sign of trace and determinant
     plt.plot(voltages, trace, label = r'$\tau(v)$')
     plt.plot(voltages, determinant, label = r'$\Delta(v)$')
     plt.hlines(0, min(voltages), max(voltages), colors='k')
@@ -143,6 +139,9 @@ def jacobian(v:float = False):
 
 
 def nature_equilibria():
+    '''
+    Draws the trace-determinant diagram and positions HRM equilibria within it
+    '''
     tr = lambda v:  -3*(v**2) + 6*v - 1
     det = lambda v: 3*(v**2) + 4*v
 
@@ -192,7 +191,7 @@ def nature_equilibria():
     plt.show()
     plt.close()
 
-def HRM(t:float, vars:list[float, float], I:callable):
+def HRM(t:float, vars:list[float, float], I:callable)->ndarray:
     '''
     t : float, time, necessary for scipy.solve_ivp
     vars : list[float, float], [v(t), r(t)], [voltage, recovery variable]
@@ -203,61 +202,103 @@ def HRM(t:float, vars:list[float, float], I:callable):
     return array([dvdt(*vars, I),
                   drdt(*vars)])
 
-def voltage_trace(duration: int, v_start:float, r_start:float):
-    # Question 6 & 7
-    IApplied = lambda t: 0
+def voltage_trace(duration: int, 
+                  v_start:float | ndarray, 
+                  r_start:float | ndarray,
+                  applied_currents:ndarray = array([0]))->ndarray:
+    '''
+    Given a duration of simulation, set of initial conditions (v, r), and set of applied current amplitudes,
+    Calculates, and plots the voltage traces, potentially in reponse to a 15 second burst of applied current of specified strength.
 
-    # Question 8
-    # IApplied = lambda t: 20 if t > 300 and t < 350 else 0
-
-    hrm = lambda t,vars: HRM(t, vars, IApplied)
-
+    Returns solution trajectories and their derivatives
+    '''
+    if type(v_start) == float:
+        v_start = [v_start]
+        r_start = [r_start]
+    
     t_interval = [0, duration]
-    solution = solve_ivp(fun = hrm, t_span = t_interval, t_eval= linspace(0,duration, 2000), 
-                         y0 = [v_start, r_start])
+    TRAJECTORIES = []
+
+    # calculate solutions separately for different starting conditions & applied currents
+    for vs, rs in zip(v_start, r_start):
+        for IAPP in applied_currents:
+            IApplied = lambda t: IAPP if t > 95 and t < 110 else 0
+            hrm = lambda t,vars: HRM(t, vars, IApplied)
+            solution = solve_ivp(fun = hrm, t_span = t_interval, t_eval= linspace(0,duration, 2000), 
+                                y0 = [vs, rs])
+            TRAJECTORIES.append(solution.y)
 
     ts = solution.t
-    
-    voltage, recovery  = solution.y
+    TRAJECTORIES = array(TRAJECTORIES)
+
+    voltage, recovery  = TRAJECTORIES[:,0,:], TRAJECTORIES[:,1,:]
     applied_current = [IApplied(tm) for tm in ts]
 
-
+    # plotting traces
     fig, ax = plt.subplots(nrows=1, ncols=1)
-    ax.plot(ts, voltage, color = 'k')
+    for ind in range(TRAJECTORIES.shape[0]):
+        if len(applied_currents) > 1:
+            ax.plot(ts, voltage[ind,:], alpha = 0.5, label = f'I_App = {round(applied_currents[ind], 2)}')
+        else:
+            ax.plot(ts, voltage[ind,:], alpha = 0.5)
     ax.set_ylabel('Membrane Voltage (v)')
-    
-    # ax[1].plot(ts, recovery, color = 'lightsteelblue')
-    # ax[1].set_ylabel('Recovery (r)')
+    if applied_currents.size > 0:
+        plt.legend(loc = 1)
 
     plt.xlabel('Time (t)')
-    plt.savefig('voltage_trace.png', dpi = 200)
+    plt.tight_layout()
+    plt.savefig(f'voltage_trace_{sum(file.startswith("voltage") for file in os.listdir())}.png', dpi = 300)
     plt.show()
     plt.close()
-    
-    return array([list(voltage[:-1]), 
-                  list(recovery[:-1]),
-                 [(voltage[i+1] - voltage[i]) / (ts[i+1] - ts[i]) for i in range(voltage.size-1)], #dvdt
-                 [(recovery[i+1] - recovery[i]) / (ts[i+1] - ts[i]) for i in range(voltage.size-1)]]) #drdt
+
+    # derivatives of solution trajectories
+    dv_dt, dr_dt = zeros_like(voltage[:,:-1]), zeros_like(voltage[:,:-1])
+    for tr in range(voltage.shape[0]):
+        for i in range(ts.size-1):
+            dv_dt[tr, i] = (voltage[tr,i+1] - voltage[tr,i]) / (ts[i+1] - ts[i])
+            dr_dt[tr,i] = (recovery[tr,i+1] - recovery[tr,i]) / (ts[i+1] - ts[i])
+
+    return stack([voltage[:,:-1], 
+                  recovery[:,:-1],
+                  dv_dt, 
+                  dr_dt])
 
 if __name__ == '__main__':
-    # phase_portrait() 
-    # jacobian()
-    # nature_equilibria()
+    # ANALYTICAL RESULTS
+    # Q2,3
+    phase_portrait() 
+    # # Q4
+    jacobian()
+    # # Q5
+    nature_equilibria()
     
+    # NUMERICAL RESULTS
+    # for plotting multiple trajectories around equilibria
+    gv = lambda v : 5*v**2 - 1
+    equilibria_v = roots([-1, -2, 0, 1]) # what a cool function!
+    equilibria_r = gv(equilibria_v)
+
+    aroundEQ = uniform([equilibria_v-0.5, equilibria_r-9], 
+                       [equilibria_v+1, equilibria_r+3], 
+                       (7,2,3))
+
     # with all of these, also include trajectory along phase portrait
-    # Q6 : self-sustained spikes
-    # sustained_traj = voltage_trace(500, .5, 0)
-    # phase_portrait(trajectories=sustained_traj)
+    # Q6 : self-sustained spikes around E3
+    sustained_traj = voltage_trace(150, aroundEQ[:,0,2], aroundEQ[:,1,2])
+    phase_portrait(trajectories=sustained_traj)
 
     # Q7 : Bistability
-    # e3
-    # e3_traj = voltage_trace(500, -0.99, 2)
-    # phase_portrait(trajectories=e3_traj)
+    # Around E2 Bistability (more widespread sampling)
+    aroundEQ2 = uniform([equilibria_v-0.5, equilibria_r-6], 
+                    [equilibria_v+1, equilibria_r+8], 
+                    (7,2,3))
+    e2_traj = voltage_trace(150, aroundEQ2[:,0,1], aroundEQ2[:,1,1])
+    phase_portrait(trajectories=e2_traj)
 
-    # e1
-    e1_traj = voltage_trace(500, -1.5, 5)
+    # # Zooom-in on E1
+    e1_traj = voltage_trace(150, aroundEQ[:,0,0], aroundEQ[:,1,0])
     phase_portrait(trajectories=e1_traj)
 
-    # Q8 : Suppressing periodic spikes w current
-    # suppress = voltage_trace(500, -0.99, 2)
-    # phase_portrait(trajectories=suppress, voltage_max=3.5)
+    # Q8 : Suppressing periodic spikes w current, initial conditions chosen in periodic spiking range
+    suppress = voltage_trace(200, -0.99, 2, applied_currents=append(linspace(-10,20, 9), 0))
+    phase_portrait(trajectories=suppress, voltage_min=-4, voltage_max=4)
