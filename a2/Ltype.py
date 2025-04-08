@@ -2,8 +2,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
+import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
+from matplotlib.legend_handler import HandlerPatch
 from numpy.random import uniform
 from scipy.integrate import solve_ivp
+from scipy.optimize import fsolve
 import os
 
 def m(v: float | np.ndarray) -> float | np.ndarray:
@@ -26,7 +30,7 @@ def ICaL(V, Ca, params: dict = {'Pmax': 0.002, 'z':2, 'F':96520, 'Caout':2}):
     Idrive = lambda v, ca: params['Pmax'] * params['z'] * params['F'] * phi(v, ca)
     return m(V) * h(Ca) * Idrive(V, Ca)
 
-def Ltype(t:float, vars:list[float], I:callable,
+def Ltype(t:float, vars:list[float], I:callable, ical: bool = True,
           params : dict = {'Cainf':1e-4, 'tauCa':200, 'Beta':0.01})->np.ndarray:
     '''
     2D Model
@@ -37,7 +41,7 @@ def Ltype(t:float, vars:list[float], I:callable,
 
     # currents
     IL = Ileak(V)
-    ICaLt = ICaL(V, Ca)
+    ICaLt = ICaL(V, Ca) if ical else 0
 
     # changes in variables
     dvdt = I(t) - IL - ICaLt
@@ -50,7 +54,9 @@ def voltage_trace(duration: int,
                   ca_start:float | np.ndarray,
                   applied_current:tuple | float,
                   everything:bool = False,
-                  eq_voltages:dict[str:float] | None = None)->np.ndarray:
+                  eq_voltages:dict[str:float] | None = None, 
+                  ical : bool = True,
+                  name:str = '')->np.ndarray:
     '''
     Given a duration of simulation, set of initial conditions (v, ca), and set of applied current amplitudes,
     Calculates, and plots the voltage traces in reponse to applied current of specified strength.
@@ -70,7 +76,7 @@ def voltage_trace(duration: int,
         case Iamp:
             Iapp = lambda t: Iamp
     
-    ltype = lambda t, vars: Ltype(t, vars, Iapp)
+    ltype = lambda t, vars: Ltype(t, vars, Iapp, ical = ical)
     solution = solve_ivp(fun = ltype, t_span=t_interval, t_eval=np.linspace(0, duration, 5000),
                          y0 = [v_start, ca_start], method = 'RK45')
     
@@ -80,7 +86,7 @@ def voltage_trace(duration: int,
         m_act = m(voltage)
         h_act = h(calcium)
         Il = Ileak(voltage)
-        ICaLt = ICaL(voltage, calcium)
+        ICaLt = ICaL(voltage, calcium) if ical else np.zeros_like(ts)
 
     applied_I = [Iapp(t) for t in ts]
 
@@ -118,11 +124,21 @@ def voltage_trace(duration: int,
         axes[-1].legend(loc=4)
     
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    plt.show()
+    plt.savefig(f'voltage_trace_{name}.png', dpi = 300)
     plt.close()
 
+    dv_dt, dca_dt = np.zeros_like(voltage[:-1]), np.zeros_like(calcium[:-1])
+    for i in range(ts.size-1):
+        dv_dt[i] = (voltage[i+1] - voltage[i]) / (ts[i+1] - ts[i])
+        dca_dt[i] = (calcium[i+1] - calcium[i]) / (ts[i+1] - ts[i])
+
+    return np.stack([voltage[:-1], 
+                    calcium[:-1],
+                    dv_dt, 
+                    dca_dt])
 
 
+# Q1.4
 def window_current():
     v_range = np.linspace(-90, 25, 200)
     ms = m(v_range)
@@ -159,6 +175,174 @@ def window_current():
     plt.close()
 
 
+# q1.5
+def fV(v, ca, 
+       Iapp = 1):
+    # The voltage nullcline: f(V,Ca) = I_app - Ileak(V) - ICaL(V,Ca)
+    return Iapp - Ileak(v) - ICaL(v, ca)
+
+def fCa(v, ca, 
+        params : dict = {'Cainf':1e-4, 'tauCa':200, 'Beta':0.01}):
+    # The calcium nullcline: g(V,Ca) = -Beta * ICaL(V,Ca) - (Ca - Cainf)/tauCa
+    return (-params['Beta'] * ICaL(v, ca)) - ((ca - params['Cainf']) / params['tauCa'])
+
+def equilibrium_guess(args, I = 1):
+    v, ca = args
+    return [fV(v, ca, I), fCa(v, ca)]
+
+def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float = 1,
+                  eq_ini: tuple | None = None, save:bool = False):
+    '''
+    Gives phase portrait with equilibria and nullclines (numerically determined) at one level of applied current
+    '''
+    # nullclines
+    vrange = np.linspace(*V_range, num=density)
+    carange = np.linspace(*Ca_range, num=density)
+
+    # points where we will explore the values of fV and fCa
+    VV, CC = np.meshgrid(vrange, carange)
+    DVDT = np.array([[fV(v = x, ca = y, Iapp=I) for x, y in zip(rows, cols)] for rows, cols in zip(VV, CC)])
+    DCaDT = np.array([[fCa(v = x, ca = y) for x, y in zip(rows, cols)] for rows, cols in zip(VV, CC)])
+    
+    # equilibria (roots)
+    if eq_ini is None:
+        # finding equilibria from the drawn grid with min Sum of Squares
+        SS = DVDT**2 + DCaDT**2 # points where both closest to 0
+        min_index = np.argmin(SS)
+        i, j = np.unravel_index(min_index, SS.shape)
+        V_guess = VV[i, j]
+        Ca_guess = CC[i, j]
+        x0 = (V_guess, Ca_guess) if I != 0 else (-70, 0.05)# guess based on voltage plot
+    else:
+        x0 = eq_ini
+    equil_sol = fsolve(equilibrium_guess, x0, args = I, xtol=1e-9)
+    print(equil_sol)
+    
+    # PLOTTING!
+    # Use contour to plot the implicit curves DVDT=0 and DCaDT=0
+    # levels = [a, b, c] plots contour lines where Z == a / b / c, 
+    # we choose only 0, so just the nullclines are plotted
+    fig, ax = plt.subplots(figsize=(8,6))
+    # Blue contour for V-nullcline
+    vnull = ax.contour(VV, CC, DVDT, levels=[0], colors='teal')
+    # Red contour for Ca-nullcline
+    canull = ax.contour(VV, CC, DCaDT, levels=[0], colors='fuchsia')
+    # equilibria
+    eq = ax.scatter(equil_sol[0], equil_sol[1], color = 'g', label = 'Equilibrium', 
+                    zorder = 2, s = 50)
+    
+    # vector field
+    # discrete colors give interpretability to different areas of phase plane
+    quadrant = (np.sign(DVDT) > 0).astype(int) + 2 * (np.sign(DCaDT) > 0).astype(int) 
+    custom_cmap = ListedColormap(['lightcoral', 'blue', 'orange', 'limegreen'])
+    ax.quiver(VV, CC, DVDT, DCaDT,
+              quadrant, cmap = custom_cmap, 
+              pivot = 'tip',angles='xy',width=0.002, zorder = 0, alpha = 0.5)
+
+    ax.set_xlabel('Voltage (mV)')
+    ax.set_ylabel('Calcium (M)')
+    ax.set_title(f'Phase portrait for I_app = {round(I,4)}')
+    
+    # fancy legend nonsense
+    # quadrant labels and arrows
+    # Create the 4 arrows for your quadrants (dx,dy) 
+    #   Q0: down-left,   Q1: down-right, 
+    #   Q2: up-left,     Q3: up-right
+    arrow_Q0 = make_arrow(-0.2, -0.2, 'lightcoral')
+    arrow_Q1 = make_arrow( 0.2, -0.2, 'blue')
+    arrow_Q2 = make_arrow(-0.2,  0.2, 'orange')
+    arrow_Q3 = make_arrow( 0.2,  0.2, 'limegreen')
+
+    legend_arrows = [arrow_Q0,
+                    arrow_Q1,
+                    arrow_Q2,
+                    arrow_Q3]
+    
+    legend_labels = [r"$\frac{dv}{dt} < 0$, $\frac{dCa}{dt} < 0$",
+                    r"$\frac{dv}{dt} > 0$, $\frac{dCa}{dt} < 0$",
+                    r"$\frac{dv}{dt} < 0$, $\frac{dCa}{dt} > 0$",
+                    r"$\frac{dv}{dt} > 0$, $\frac{dCa}{dt} > 0$"]
+
+    # nullcline labels
+    vlabeldummy = mlines.Line2D([], [], color='teal', label='V-nullcline')
+    calabeldummy = mlines.Line2D([], [], color='fuchsia', label='Ca-nullcline')
+    
+    ax.legend(handles=[vlabeldummy, calabeldummy, eq, *legend_arrows],
+            labels=["V-nullcline", "Ca-nullcline", "Equilibrium"] + legend_labels,
+            loc='upper right',
+            handler_map={mpatches.FancyArrowPatch: HandlerArrow()},
+            handletextpad=1.2, labelspacing=1.2
+            )
+    
+    fig.tight_layout()
+    if save:
+        if not os.path.exists(savedir := 'phase_portraits'):
+            os.makedirs('phase_portraits')
+        plt.savefig(os.path.join(savedir, f'Phase_portrait_(I={round(I, 4)}).png'), dpi = 300)
+    else:
+        plt.show()
+    plt.close()
+    return x0
+
+
+
+# FANCY PLOTTING STUFF
+def make_arrow(dx, dy, color='black', arrowstyle='-|>', mutation_scale=15, linewidth=.5):
+    arrow = mpatches.FancyArrowPatch((0, 0), (dx, dy),
+                                    arrowstyle=arrowstyle,
+                                    mutation_scale=mutation_scale,
+                                    color=color,
+                                    linewidth=linewidth)
+    # Store the direction as attributes so the handler can use them later.
+    arrow.dx = dx
+    arrow.dy = dy
+    return arrow
+
+class HandlerArrow(HandlerPatch):
+    def create_artists(self, legend, orig_handle,
+                       xdescent, ydescent, width, height, fontsize, trans):
+        # Retrieve arrow desired direction (stored in the dummy handle)
+        dx = getattr(orig_handle, 'dx', 1.0)
+        dy = getattr(orig_handle, 'dy', 0.0)
+        
+        # Compute scale factors so that the arrow fits within the legend handle box.
+        if abs(dx) < 1e-12:
+            scale_x = 1
+        else:
+            scale_x = width / abs(dx)
+        if abs(dy) < 1e-12:
+            scale_y = 1
+        else:
+            scale_y = height / abs(dy)
+        scale = min(scale_x, scale_y)
+        
+        # Scale the arrow components:
+        dx_scaled = dx * scale
+        dy_scaled = dy * scale
+        
+        # Compute the center of the allocated handle box.
+        x_center = xdescent + 0.5 * width
+        y_center = ydescent + 0.5 * height
+        
+        # To center the arrow, shift its starting point so that the entire arrow is centered.
+        # The arrow’s total horizontal length is dx_scaled.
+        x_start = x_center - 0.5 * dx_scaled
+        y_start = y_center - 0.5 * dy_scaled
+        x_end = x_start + dx_scaled
+        y_end = y_start + dy_scaled
+        
+        arrow = mpatches.FancyArrowPatch(
+            (x_start, y_start), (x_end, y_end),
+            arrowstyle=orig_handle.get_arrowstyle(),
+            mutation_scale=fontsize,  # adjust arrow head size with font size
+            color=orig_handle.get_edgecolor() if hasattr(orig_handle, 'get_edgecolor') 
+                  else orig_handle.get_facecolor(),
+            linewidth=orig_handle.get_linewidth() if hasattr(orig_handle, 'get_linewidth')
+                  else 1.5,
+        )
+        arrow.set_transform(trans)
+        return [arrow]
+
 if __name__ == '__main__':
     ''''
     full params:
@@ -168,26 +352,38 @@ if __name__ == '__main__':
                     'Cainf':1e-4, 'tauCa':200, 'Beta':0.01}
     '''
     # run the model
-    trajectories = voltage_trace(5000, -70, 1e-4, applied_current = (
-                                                                    # -2 # constant
-                                                                    2, 500, 1000 # stepped
-                                                                    # 3, 500, 5000, 2000, 50 # pulsed
-                                                                     ), 
-                                 everything=True, eq_voltages={'El':-70})
+    # Question 1.2 - decoupled system with no L-type calcium current
+    # trajectories = voltage_trace(5000, -70, 1e-4, applied_current = (
+    #                                                                 # -2 # constant
+    #                                                                 2, 500, 1000 # stepped
+    #                                                                 # 1, 500, 5000, 150, 20 # pulsed
+    #                                                                  ), 
+    #                              everything=True, eq_voltages={'El':-70},
+    #                              ical = False)
+    # trajectories = voltage_trace(5000, -70, 1e-4, applied_current = (
+    #                                                                 # -2 # constant
+    #                                                                 2, 500, 1000 # stepped
+    #                                                                 # 3, 500, 5000, 150, 20 # pulsed
+    #                                                                  ), 
+    #                              everything=True, eq_voltages={'El':-70})
+    # Question 1.4 
     # window_current()
 
-
-''''
-1.3
-ACTIVATION is instantaneous m = minf(V), no differential equation for m
-vs INACTIVATION slow, depends on calcium buildup (which is SLOW - ∆Ca equation is slow)
-'''
-
-''''
-1.4
-window current plot
-l=type long lasting inactivate only at high ca (high ca is slow)
-'''
+    # Question 1.5 phase portrait and nullclines with constant applied current I(all_t) = 1
+    # trajectories = voltage_trace(5000, -70, 1e-4, applied_current = 1, 
+    #                              everything=True, eq_voltages={'El':-70},
+    #                              name = '(I = 1)')
+    # move through a range of possible applied currents
+    x0 = None
+    # critical_region = np.arange(1.29, 1.5, 0.025) # -> bifurcation around 1.29
+    # -> another bifurcation or something aroun 5.65
+    # full_range = np.concat([np.arange(0, 1.29, 0.1), critical_region, np.arange(1.5, 6, 0.1)])
+    full_range = np.arange(0, 4, .5)
+    for Iapp in full_range:
+        # Iapp = round(Iapp, 2)
+        # continuation - using the equilibrium from the previous bifurcation parameter
+        x0 = phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=200, I = Iapp)
+        print(f'Phase portrait for Iapp = {round(Iapp, 4)} done!')
 
 ''''
 1.5 phase portrait and nullclines with constant applied current I(all_t) = 1
