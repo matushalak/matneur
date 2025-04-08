@@ -15,17 +15,19 @@ def h(Ca: float | np.ndarray, ki = 0.001) -> float | np.ndarray:
     return ki / (ki + Ca)
 
 # Define the constant-field (Goldman-Hodgkin-Katz) function phi(V, Ca)
-def phi(V, Ca, params: dict = {'z':2, 'F':96520, 'Caout':2, 'R':8313.4, 'T':273.15 + 2}):
+def phi(V, Ca, params: dict = {'z':2, 'F':96520, 'Caout':2, 'R':8313.4, 'T':273.15 + 25}):
     xi = (params['z'] * params['F'] * V) / (params['R'] * params['T'])
     return xi * (Ca - params['Caout'] * np.exp(-xi)) / (1 - np.exp(-xi))
 
+def Ileak(V, params : dict = {'gL':0.05,'EL':-70}):
+    return params['gL'] * (V - params['EL'])
 
-def Ltype(t:float, vars:list[float], I:callable, 
-          verbose: bool = False,
-          params : dict = {'gL':0.05,'EL':-70,
-                           'Pmax': 0.002, 'ki':0.001, 
-                           'z':2, 'F':96520, 'Caout':2, 'R':8313.4, 'T':273.15 + 25,
-                           'Cainf':1e-4, 'tauCa':200, 'Beta':0.01})->np.ndarray:
+def ICaL(V, Ca, params: dict = {'Pmax': 0.002, 'z':2, 'F':96520, 'Caout':2}):
+    Idrive = lambda v, ca: params['Pmax'] * params['z'] * params['F'] * phi(v, ca)
+    return m(V) * h(Ca) * Idrive(V, Ca)
+
+def Ltype(t:float, vars:list[float], I:callable,
+          params : dict = {'Cainf':1e-4, 'tauCa':200, 'Beta':0.01})->np.ndarray:
     '''
     2D Model
     Minimal model for L-type currents
@@ -33,23 +35,15 @@ def Ltype(t:float, vars:list[float], I:callable,
     # unpack variables
     V, Ca = vars
 
-    # gating variables
-
     # currents
-    xi = lambda v: (params['z'] * params['F'] * v )/ (params['R'] * params['T'])
-    Idrive = lambda v, Ca: params['Pmax'] * params['z'] * params['F'] * xi(v) * ((Ca - params['Caout'] * np.exp(-xi(v))) / (1 - np.exp(-xi(v))))
-    
-    Ileak = params['gL'] * (V - params['EL'])
-    ICaL = m(V) * h(Ca) * Idrive(V, Ca)
+    IL = Ileak(V)
+    ICaLt = ICaL(V, Ca)
 
     # changes in variables
-    dvdt = I(t) - Ileak - ICaL
-    dCadt = (-params['Beta'] * ICaL) - ((Ca - params['Cainf']) / params['tauCa'])
+    dvdt = I(t) - IL - ICaLt
+    dCadt = (-params['Beta'] * ICaLt) - ((Ca - params['Cainf']) / params['tauCa'])
 
-    if verbose:
-        return np.array([m(V), h(Ca), Ileak, ICaL])
-    else:
-        return np.array([dvdt, dCadt])
+    return np.array([dvdt, dCadt])
 
 def voltage_trace(duration: int, 
                   v_start:float | np.ndarray, 
@@ -66,10 +60,13 @@ def voltage_trace(duration: int,
     t_interval = [0, duration]
     # prepare applied current function
     match applied_current:
+        # Pulsed
         case Iamp, Istart, Istop, Period, Pulse_duration:
             Iapp = lambda t: Iamp if t >= Istart and t <= Istop and (t % Period) < Pulse_duration else 0
+        # Stepped
         case Iamp, Istart, Istop:
             Iapp = lambda t: Iamp if t >= Istart and t <= Istop else 0
+        # Constant
         case Iamp:
             Iapp = lambda t: Iamp
     
@@ -80,14 +77,16 @@ def voltage_trace(duration: int,
     ts = solution.t
     voltage, calcium = solution.y
     if everything:
-        all_res = [Ltype(t, (v, ca), Iapp, verbose = True) for t, v, ca in zip(ts, voltage, calcium)]
-        m_act, h_act, Il, ICaL = np.array(all_res).reshape(4,-1)
+        m_act = m(voltage)
+        h_act = h(calcium)
+        Il = Ileak(voltage)
+        ICaLt = ICaL(voltage, calcium)
 
     applied_I = [Iapp(t) for t in ts]
 
     # plotting traces
     nr = 4 if everything else 2
-    fig, axes = plt.subplots(nrows=nr, ncols=1, figsize = (10,14), sharex = True)
+    fig, axes = plt.subplots(nrows=nr, ncols=1, figsize = (5,7), sharex = True)
 
     # Voltage plot
     axes[0].plot(ts, voltage, color = 'k')
@@ -107,13 +106,14 @@ def voltage_trace(duration: int,
         axes[2].plot(ts, m_act, label = 'L-type act (m)', color = 'b')
         axes[2].plot(ts, h_act, label = 'L-type inact (h)', color = 'g')
         axes[2].set_ylabel('Activation variables')
-        axes[2].legend(loc = 4)
+        axes[2].set_ylim(-0.05, 1.05)
+        axes[2].legend(loc = 1)
 
         # Applied Current & IL & ICaL
         axes[-1].plot(ts, applied_I, label = 'applied', color = 'k')
         axes[-1].plot(ts, Il, label = r'$I_{leak}$', color = 'orange')
-        axes[-1].plot(ts, ICaL, label = r'$I_{Ca,L}$', color = 'r', alpha = 0.5)
-        axes[-1].set_ylabel('Current (µA)')
+        axes[-1].plot(ts, ICaLt, label = r'$I_{Ca,L}$', color = 'r', alpha = 0.5)
+        axes[-1].set_ylabel('Current')
         axes[-1].set_xlabel('Time [ms]')
         axes[-1].legend(loc=4)
     
@@ -160,10 +160,21 @@ def window_current():
 
 
 if __name__ == '__main__':
+    ''''
+    full params:
+    params: dict = {'gL':0.05,'EL':-70,
+                    'Pmax': 0.002, 'ki':0.001, 
+                    'z':2, 'F':96520, 'Caout':2, 'R':8313.4, 'T':273.15 + 25,
+                    'Cainf':1e-4, 'tauCa':200, 'Beta':0.01}
+    '''
     # run the model
-    # trajectories = voltage_trace(20000, -70, 1e-4, applied_current = (5, 0, 20000, 200, 20), 
-    #                              everything=True, eq_voltages={'El':-70})
-    window_current()
+    trajectories = voltage_trace(5000, -70, 1e-4, applied_current = (
+                                                                    # -2 # constant
+                                                                    2, 500, 1000 # stepped
+                                                                    # 3, 500, 5000, 2000, 50 # pulsed
+                                                                     ), 
+                                 everything=True, eq_voltages={'El':-70})
+    # window_current()
 
 
 ''''
