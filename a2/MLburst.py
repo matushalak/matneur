@@ -1,3 +1,4 @@
+# @matushalak Mathematical neuroscience 2025
 import numpy as np
 
 # TODO: find out reasonable parameters for V, n & Ca
