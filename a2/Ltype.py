@@ -1,15 +1,17 @@
 # @matushalak Mathematical neuroscience 2025
 import numpy as np
+import scipy.integrate as sp_integrate
+import scipy.optimize as sp_optim
+import scipy.signal as sp_sig
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 from matplotlib.legend_handler import HandlerPatch
 from numpy.random import uniform
-from scipy.integrate import solve_ivp
-from scipy.optimize import fsolve
 import os
 
+# Basic functions 
 def m(v: float | np.ndarray) -> float | np.ndarray:
     alpha = lambda v: 0.055 * ((-27.01 - v) / (np.exp((-27.01 - v) / 3.8) - 1))
     beta = lambda v: 0.94 * np.exp((-63.01 - v) / 17)
@@ -30,6 +32,7 @@ def ICaL(V, Ca, params: dict = {'Pmax': 0.002, 'z':2, 'F':96520, 'Caout':2}):
     Idrive = lambda v, ca: params['Pmax'] * params['z'] * params['F'] * phi(v, ca)
     return m(V) * h(Ca) * Idrive(V, Ca)
 
+# Model
 def Ltype(t:float, vars:list[float], I:callable, ical: bool = True,
           params : dict = {'Cainf':1e-4, 'tauCa':200, 'Beta':0.01})->np.ndarray:
     '''
@@ -49,6 +52,7 @@ def Ltype(t:float, vars:list[float], I:callable, ical: bool = True,
 
     return np.array([dvdt, dCadt])
 
+# To plot voltage, calcium and related variables
 def voltage_trace(duration: int, 
                   v_start:float | np.ndarray, 
                   ca_start:float | np.ndarray,
@@ -77,7 +81,7 @@ def voltage_trace(duration: int,
             Iapp = lambda t: Iamp
     
     ltype = lambda t, vars: Ltype(t, vars, Iapp, ical = ical)
-    solution = solve_ivp(fun = ltype, t_span=t_interval, t_eval=np.linspace(0, duration, 5000),
+    solution = sp_integrate.solve_ivp(fun = ltype, t_span=t_interval, t_eval=np.linspace(0, duration, 5000),
                          y0 = [v_start, ca_start], method = 'RK45')
     
     ts = solution.t
@@ -215,7 +219,7 @@ def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float
         x0 = (V_guess, Ca_guess) if I != 0 else (-70, 0.05)# guess based on voltage plot
     else:
         x0 = eq_ini
-    equil_sol = fsolve(equilibrium_guess, x0, args = I, xtol=1e-9)
+    equil_sol = sp_optim.fsolve(equilibrium_guess, x0, args = I, xtol=1e-9)
     print(equil_sol)
     
     # PLOTTING!
@@ -286,6 +290,153 @@ def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float
 
 
 
+# Bifurcations
+def estimate_Jacobian(local_vars: np.ndarray, Iapp: float, perturb = 1e-6
+                      ) -> np.ndarray:
+    '''
+    Estimates 2 x 2 Jacobian at [V, Ca] using finite differences
+    '''
+    f0 = Ltype(0, local_vars, I = lambda t: Iapp) # dv/dt, dCa/dt
+    J = np.zeros((2,2)) # jacobian
+    
+    for i in range(2):
+        perturbation = np.zeros(2)
+        perturbation[i] = perturb
+        f1 = Ltype(0, local_vars + perturbation, I = lambda t: Iapp) # dv/dt, dCa/dt
+        J[:, i] = (f1 - f0) / perturb
+
+    return J
+
+def stability(local_vars: np.ndarray, Iapp: float)-> float:
+    '''
+    Returns: (stability, type)
+        Stability
+        ---------
+        True -> stable, attracting
+        False -> unstable, repelling / saddle
+
+        Type
+        ----
+        0 -> saddle
+        1 -> node (real)
+        2 -> focus (complex)
+    '''
+    # get Jacobian
+    J = estimate_Jacobian(local_vars, Iapp)
+
+    # eigenvalues
+    eig_J = np.linalg.eigvals(J)
+    real = np.real(eig_J)
+    imag = np.imag(eig_J)
+
+    # trace
+    trace_J = np.trace(J)
+    # determinant
+    det_J = np.linalg.det(J)
+
+    if det_J < 0:
+        assert np.any(real > 0) and np.any(real < 0), 'Jacobian Eigenvalues should have opposite signs for saddle'
+        return False, 0 # saddle
+    
+    elif trace_J > 0:
+        assert np.all(real > 0), 'Real parts should be > 0 for unstable equilibrium'
+        if np.allclose(imag, 0, atol=1e-8):
+            return False, 1 # unstable, node (real)
+        else:
+            return False, 2 # unstable, focus (complex)
+    
+    elif trace_J < 0:
+        assert np.all(real < 0), 'Real parts should be < 0 for stable equilibrium'
+        if np.allclose(imag, 0, atol=1e-8):
+            return True, 1 # stable, node (real)
+        else:
+            return True, 2 # stable, focus (complex)
+    
+    else:
+        print(f'Borderline case at [V, Ca] = {local_vars} with eigenvalues = {eig_J}')
+        return 10,10
+
+def find_limit_cycle(I: float, ini_v_ca: tuple) -> tuple | None:
+    '''
+    Returns Min and Max of limit cycle IF limit cycle was encountered, else None
+    '''
+    ltype = lambda t, vars: Ltype(t, vars, I = lambda t: I)
+    v_start, ca_start = ini_v_ca
+    t_span = (0, 10000)  # Run for a long time (adjust based on timescales)
+    t_eval = np.linspace(t_span[0], t_span[1], 20000)
+    solution = sp_integrate.solve_ivp(fun = ltype, t_span=t_span, t_eval=t_eval,
+                         y0 = [v_start, ca_start], method = 'RK45')
+    ts = solution.t
+    voltage, calcium = solution.y
+
+    # Cut away transients and only look at last 20% tail of signal
+    # if in limit cycle, will still be in the cycle at the end
+    tail = int(0.7 * len(ts))
+    # peaks?
+    peaks, _ = sp_sig.find_peaks(voltage[tail:], height=5)
+    t_peaks = ts[tail:][peaks]
+    if len(t_peaks) > 1:
+        period_estimate = np.mean(np.diff(t_peaks))
+        print(f"Estimated period from {len(peaks)} peaks:", period_estimate)
+        return peaks.min(), peaks.max()
+    else:
+        print("Not enough peaks found; adjust threshold or simulation time.")
+        return None
+
+def bifurcations(Irange: tuple = (0, 3), stepsize: float = 0.01):
+    # bifurcation parameter
+    I_values = np.arange(*Irange, stepsize)
+    # to store results
+    V_stable = []
+    V_unstable = []
+    V_cycle_min = []
+    V_cycle_max = []
+
+    ini_guess = (-70, 0.05)# guess based on voltage plot
+    last_equilibrium = sp_optim.fsolve(equilibrium_guess, ini_guess, args=(Irange[0],)) # For I = 0
+
+    for I_val in I_values:
+        # 1) Attempt to find equilibrium near last_equilibrium
+        eq_sol = sp_optim.fsolve(equilibrium_guess, last_equilibrium, args=(I_val,))
+        
+        # 2) Check stability (via estimated Jacobian):
+        stable_eq, type = stability(eq_sol, I_val) 
+
+        # 3) If stable, add eq_sol[0] to V_stable. If not stable, put eq_sol in V_unstable
+        if stable_eq:
+            V_stable.append((I_val, eq_sol[0]))  # store voltage eq
+        else:
+            V_unstable.append((I_val, eq_sol[0]))
+
+            # Attempt time simulation to find limit cycle
+            # e.g. run a 1000-ms simulation from a perturbation
+            cycle_data = find_limit_cycle(I_val, eq_sol)
+            if cycle_data is not None:
+                Vmin, Vmax = cycle_data
+                V_cycle_min.append((I_val, Vmin))
+                V_cycle_max.append((I_val, Vmax))
+
+        # 4) Update last_equilibrium for next iteration
+        last_equilibrium = eq_sol
+    
+    V_stable = np.array(V_stable)
+    V_unstable = np.array(V_unstable)
+    V_cycle_min = np.array(V_cycle_min)
+    V_cycle_max = np.array(V_cycle_max)
+
+    plot_bifurcation(V_stable, V_unstable, V_cycle_min, V_cycle_max)
+
+def plot_bifurcation(Vstable, V_unstable, V_cycle_min, V_cycle_max):
+    fig, axs = plt.subplots()
+    axs.plot(Vstable[:,0], Vstable[:,1], linestyle = '-', color = 'blue')
+    axs.plot(V_unstable[:,0],V_unstable[:,1], linestyle = '--', color = 'red')
+    # axs.plot(V_cycle_min[:,0],V_cycle_min[:,1], linestyle = ':', color = 'purple')
+    # axs.plot(V_cycle_max[:,0],V_cycle_max[:,1], linestyle = ':', color = 'purple')
+
+    plt.tight_layout()
+    plt.show()
+
+
 # FANCY PLOTTING STUFF
 def make_arrow(dx, dy, color='black', arrowstyle='-|>', mutation_scale=15, linewidth=.5):
     arrow = mpatches.FancyArrowPatch((0, 0), (dx, dy),
@@ -351,7 +502,6 @@ if __name__ == '__main__':
                     'z':2, 'F':96520, 'Caout':2, 'R':8313.4, 'T':273.15 + 25,
                     'Cainf':1e-4, 'tauCa':200, 'Beta':0.01}
     '''
-    # run the model
     # Question 1.2 - decoupled system with no L-type calcium current
     # trajectories = voltage_trace(5000, -70, 1e-4, applied_current = (
     #                                                                 # -2 # constant
@@ -379,15 +529,15 @@ if __name__ == '__main__':
     # -> another bifurcation or something aroun 5.65
     # full_range = np.concat([np.arange(0, 1.29, 0.1), critical_region, np.arange(1.5, 6, 0.1)])
     full_range = np.arange(0, 4, .5)
-    for Iapp in full_range:
-        # Iapp = round(Iapp, 2)
-        # continuation - using the equilibrium from the previous bifurcation parameter
-        x0 = phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=200, I = Iapp)
-        print(f'Phase portrait for Iapp = {round(Iapp, 4)} done!')
+    # for Iapp in full_range:
+    #     # Iapp = round(Iapp, 2)
+    #     # continuation - using the equilibrium from the previous bifurcation parameter
+    #     x0 = phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=200, I = Iapp)
+    #     print(f'Phase portrait for Iapp = {round(Iapp, 4)} done!')
 
-''''
-1.5 phase portrait and nullclines with constant applied current I(all_t) = 1
-'''
+    # Question 1.6
+    # TODO: include x0s from before for each I
+    bifurcations(Irange=(0, 3), stepsize=1e-3)
 
 ''''
 1.6
