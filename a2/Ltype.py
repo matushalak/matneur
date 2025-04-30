@@ -11,7 +11,7 @@ from matplotlib.legend_handler import HandlerPatch
 from numpy.random import uniform
 import os
 
-# Basic functions 
+# Basic helper functions 
 def m(v: float | np.ndarray) -> float | np.ndarray:
     alpha = lambda v: 0.055 * ((-27.01 - v) / (np.exp((-27.01 - v) / 3.8) - 1))
     beta = lambda v: 0.94 * np.exp((-63.01 - v) / 17)
@@ -62,7 +62,9 @@ def voltage_trace(duration: int,
                   ical : bool = True,
                   name:str = '',
                   plot:bool = True,
-                  n_samples:int = 1000)->np.ndarray:
+                  show:bool = True,
+                  n_samples:int = 1000,
+                  return_fig: bool = False)->np.ndarray:
     '''
     Given a duration of simulation, set of initial conditions (v, ca), and set of applied current amplitudes,
     Calculates, and plots the voltage traces in reponse to applied current of specified strength.
@@ -119,7 +121,13 @@ def voltage_trace(duration: int,
         fig, axes = plt.subplots(nrows=nr, ncols=1, figsize = (5,7), sharex = True)
 
         # Voltage plot
-        axes[0].plot(ts, voltage, color = 'k')
+        match voltage.shape:
+            case ntraces, nsampl:
+                for itr in range(ntraces):
+                    axes[0].plot(ts, voltage[itr,:], alpha = 0.5)    
+            case nsampl:
+                axes[0].plot(ts, voltage, color = 'k')
+
         if eq_voltages is not None:
             for eq, vlt in eq_voltages.items():
                 axes[0].plot(ts, np.full(ts.shape, vlt), label = eq, color = 'orange', alpha = 0.3)
@@ -127,7 +135,13 @@ def voltage_trace(duration: int,
         axes[0].set_ylabel('Membrane Voltage (mV)')
         
         # Calcium concentration
-        axes[1].plot(ts, calcium, color = 'darkred')
+        match calcium.shape:
+            case ntraces, nsampl:
+                for itr in range(ntraces):
+                    axes[1].plot(ts, calcium[itr,:], alpha = 0.5)
+            case nsampl:
+                axes[1].plot(ts, calcium, color = 'darkred')
+
         axes[1].set_ylabel(r'$[\text{Ca}^{2+}]_{in} (M)$')
 
         if everything:
@@ -146,22 +160,20 @@ def voltage_trace(duration: int,
             axes[-1].set_ylabel('Current')
             axes[-1].set_xlabel('Time [ms]')
             axes[-1].legend(loc=4)
-        
+
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.savefig(f'voltage_trace_{name}.png', dpi = 300)
-        plt.close()
-
-    # dv_dt, dca_dt = np.zeros_like(voltage[:,:-1]), np.zeros_like(calcium[:,:-1])
-    # for i in range(ts.size-1):
-    #     dv_dt[i] = (voltage[i+1] - voltage[i]) / (ts[i+1] - ts[i])
-    #     dca_dt[i] = (calcium[i+1] - calcium[i]) / (ts[i+1] - ts[i])
-    # dv_dt = (voltage[:,1:] - voltage[:,:-1]) / (ts[1:] - ts[:-1])
-    # dca_dt = (calcium[:,1:] - calcium[:,:-1]) / (ts[1:] - ts[:-1])
-
-    return retTraj
+        if not return_fig:
+            plt.savefig(f'voltage_trace_{name}.png', dpi = 300)
+            if show:
+                plt.show()
+            plt.close()
+    if return_fig:
+        return retTraj, fig
+    else:
+        return retTraj
 
 
-# Q1.4
+# --------------- Q1.4 -------------------
 def window_current():
     v_range = np.linspace(-90, 25, 200)
     ms = m(v_range)
@@ -213,9 +225,12 @@ def equilibrium_guess(args, I = 1):
     v, ca = args
     return [fV(v, ca, I), fCa(v, ca)]
 
+
+# Workhorse, does a lot, quite proud of this function
 def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float = 1,
                   eq_ini: tuple | None = None, save:bool = False, plot:bool = True,
-                  trajectories: None | np.ndarray = None, I_names:list | None = None):
+                  trajectories: None | np.ndarray = None,
+                  plot0nullcline:bool = False, show:bool = False, return_fig: bool = False):
     '''
     Gives phase portrait with equilibria and nullclines (numerically determined) at one level of applied current
     '''
@@ -226,6 +241,8 @@ def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float
     # points where we will explore the values of fV and fCa
     VV, CC = np.meshgrid(vrange, carange)
     DVDT = np.array([[fV(v = x, ca = y, Iapp=I) for x, y in zip(rows, cols)] for rows, cols in zip(VV, CC)])
+    if plot0nullcline:
+        dvdt0 = np.array([[fV(v = x, ca = y, Iapp=0) for x, y in zip(rows, cols)] for rows, cols in zip(VV, CC)])
     DCaDT = np.array([[fCa(v = x, ca = y) for x, y in zip(rows, cols)] for rows, cols in zip(VV, CC)])
     
     # equilibria (roots)
@@ -241,6 +258,10 @@ def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float
         x0 = eq_ini
     equil_sol = sp_optim.fsolve(equilibrium_guess, x0, args = I, xtol=1e-9)
     print(equil_sol)
+    Stable, Type = stability(equil_sol, Iapp=I)
+    stabilities = {True:'Stable', False:'Unstable'}
+    types = {0: 'saddle', 1: 'node (real)', 2: 'focus (complex)'}
+    print(f'{stabilities[Stable]} {types[Type]}')
     
     # PLOTTING!
     if plot:
@@ -248,12 +269,15 @@ def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float
         # levels = [a, b, c] plots contour lines where Z == a / b / c, 
         # we choose only 0, so just the nullclines are plotted
         fig, ax = plt.subplots(figsize=(8,6))
+        if plot0nullcline:
+            # Black contour for V-nullcline at Iapp = 0
+            vnull0 = ax.contour(VV, CC, dvdt0, levels=[0], colors='black')    
         # Blue contour for V-nullcline
         vnull = ax.contour(VV, CC, DVDT, levels=[0], colors='teal')
         # Red contour for Ca-nullcline
         canull = ax.contour(VV, CC, DCaDT, levels=[0], colors='fuchsia')
         # equilibria
-        eq = ax.scatter(equil_sol[0], equil_sol[1], color = 'g', label = 'Equilibrium', 
+        eq = ax.scatter(equil_sol[0], equil_sol[1], color = 'g' if Stable else 'r', label = f'{stabilities[Stable]} {types[Type]} Equilibrium \n{np.round(equil_sol, 3)}', 
                         zorder = 2, s = 50)
         
         # vector field
@@ -265,21 +289,17 @@ def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float
                 pivot = 'tip',angles='xy',width=0.002, zorder = 0, alpha = 0.5)
         
         if trajectories is not None:
-            cm = plt.get_cmap('prism')
-            for ii in np.arange(trajectories.shape[1])[::10]:
-                # Always starting from same spot, different trajectories
-                col = cm(ii)
-                for tr in range(10):
-                    print(tr+ii)
-                    ax.plot(trajectories[0,tr+ii,:], trajectories[1,tr+ii,:], alpha = 0.9, linestyle = '-', color = col)
-                    # startpoints
-                    ax.scatter(trajectories[0,tr+ii,0], trajectories[1,tr+ii,0], marker = '*', color = col)
+            for tr in range(trajectories.shape[1]):
+                print('Trajectory', tr)
+                ax.plot(trajectories[0,tr,:], trajectories[1,tr,:], alpha = 0.9, linestyle = '-')
+                # startpoints
+                ax.scatter(trajectories[0,tr,0], trajectories[1,tr,0], marker = '*')
 
         ax.set_xlabel('Voltage (mV)')
         ax.set_ylabel('Calcium (M)')
         ax.set_title(f'Phase portrait for I_app = {round(I,4)}')
         
-        # fancy legend nonsense
+        # fancy legend nonsense (ignore)
         # quadrant labels and arrows
         # Create the 4 arrows for your quadrants (dx,dy) 
         #   Q0: down-left,   Q1: down-right, 
@@ -304,45 +324,62 @@ def phase_portait(V_range: tuple, Ca_range: tuple, density: int = 1000, I: float
         calabeldummy = mlines.Line2D([], [], color='fuchsia', label='Ca-nullcline')
         
         ax.legend(handles=[vlabeldummy, calabeldummy, eq, *legend_arrows],
-                labels=["V-nullcline", "Ca-nullcline", "Equilibrium"] + legend_labels,
+                labels=["V-nullcline", "Ca-nullcline", f'{stabilities[Stable]} {types[Type]} \n{np.round(equil_sol, 3)}'] + legend_labels,
                 loc='upper right',
                 handler_map={mpatches.FancyArrowPatch: HandlerArrow()},
                 handletextpad=1.2, labelspacing=1.2
                 )
         
         fig.tight_layout()
-        if save:
-            if not os.path.exists(savedir := 'phase_portraits'):
-                os.makedirs('phase_portraits')
-            plt.savefig(os.path.join(savedir, f'Phase_portrait_(I={round(I, 4)}).png'), dpi = 300)
-        else:
-            plt.show()
-        plt.close()
-    return x0
+        if not return_fig:
+            if save:
+                if trajectories is None:
+                    if not os.path.exists(savedir := 'phase_portraits'):
+                        os.makedirs('phase_portraits')
+                    savename = f'Phase_portrait_(I={round(I, 4)}).png'
+                    plt.savefig(os.path.join(savedir, savename), dpi = 300)
+                else:
+                    savename = f'Phase_portrait_(I={round(I, 4)})_trajectories.png'
+                    plt.savefig(savename, dpi = 300)
 
-# Q1.6 S3
-def transients(V_range=(-80, 100), Ca_range=(0, 1.6)):
+            if show:
+                plt.show()
+            plt.close()
+    if return_fig:
+        return fig
+    else:
+        return x0
+
+
+# -------------- Q1.6 S3 --------------------
+def transients(V_range=(-80, 25), Ca_range=(0, 1.65), show:bool=False):
     # define a range of initial conditions
-    v_vals = np.random.uniform(*V_range, size = 10)
-    ca_vals = np.random.uniform(*Ca_range, size = 10)
-    currents = [(iapp, 5000) for iapp in np.arange(0,5,0.5)]
+    # random
+    # v_vals = np.random.uniform(*V_range, size = 10)
+    # ca_vals = np.random.uniform(*Ca_range, size = 10)
+    # hand-picked
+
+    v_vals = np.asarray([-75, -45, -30, -50])
+    ca_vals = np.asarray([1.4, 0.1, 0.02, 1.62])
+    currents = [(iapp, 1600) for iapp in np.linspace(0,3,40)]
     n_ts = 1000
 
-    all_signal = np.empty((2, len(currents) * len(v_vals), n_ts))
-    current_ranges = [(i*10, (i+1)*10) for i in range(len(currents))]
+    # all_signal = np.zeros((2, len(currents) * len(v_vals), n_ts))
+    current_ranges = [(i*len(v_vals), (i+1)*len(v_vals)) for i in range(len(currents))]
     
     for ic, i_config in enumerate(currents):
         # returns a (nsignals, n_ini_conditions, n_time_samples)
         #   nsignals are [voltage_trace, calcium_trace]
-        res = voltage_trace(duration = 40000, v_start=v_vals, ca_start=ca_vals, applied_current=i_config,
-                            plot=False, n_samples=n_ts)
+        res = voltage_trace(duration = 10000, v_start=v_vals, ca_start=ca_vals, applied_current=i_config,
+                            plot=True, n_samples=n_ts, name=f'Istep_{ic}', show=show)
         
-        all_signal[:,current_ranges[ic][0]:current_ranges[ic][1],:] = res
-
-    phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=200, I = 0, plot=True, trajectories=all_signal)
+        phase_portait(V_range=(-80, 35), Ca_range=(0, 1.7), density=200, I = i_config[0], trajectories=res,
+                      plot0nullcline=True, 
+                      plot=True,  save=True, show=show)
 
 # semi-successful attempt at bifucations
 # -------------- Bifurcations ----------
+# works
 def estimate_Jacobian(local_vars: np.ndarray, Iapp: float, perturb = 1e-6
                       ) -> np.ndarray:
     '''
@@ -359,6 +396,8 @@ def estimate_Jacobian(local_vars: np.ndarray, Iapp: float, perturb = 1e-6
 
     return J
 
+
+# works
 def stability(local_vars: np.ndarray, Iapp: float)-> float:
     '''
     Returns: (stability, type)
@@ -408,7 +447,8 @@ def stability(local_vars: np.ndarray, Iapp: float)-> float:
         print(f'Borderline case at [V, Ca] = {local_vars} with eigenvalues = {eig_J}')
         return 10,10
 
-# Doesn't work :(
+
+# Doesn't work properly, MatCont worked better 
 def find_limit_cycle(I: float, ini_v_ca: tuple) -> tuple | None:
     '''
     Returns Min and Max of limit cycle IF limit cycle was encountered, else None
@@ -437,6 +477,7 @@ def find_limit_cycle(I: float, ini_v_ca: tuple) -> tuple | None:
         print("Not enough peaks found; adjust threshold or simulation time.")
         return None
 
+# Doesn't work properly, MatCont worked better 
 def bifurcations(Irange: tuple = (0, 3), stepsize: float = 0.01, 
                  Ivals: np.ndarray | None = None, x0vals: np.ndarray | None = None):
     # bifurcation parameter
@@ -484,6 +525,7 @@ def bifurcations(Irange: tuple = (0, 3), stepsize: float = 0.01,
 
     plot_bifurcation(V_stable, V_unstable, V_cycle_min, V_cycle_max)
 
+# Doesn't work properly, MatCont worked better 
 def plot_bifurcation(Vstable, V_unstable, V_cycle_min, V_cycle_max):
     fig, axs = plt.subplots()
     axs.scatter(Vstable[:,0], Vstable[:,1], color = 'blue')
@@ -495,7 +537,24 @@ def plot_bifurcation(Vstable, V_unstable, V_cycle_min, V_cycle_max):
     plt.show()
 
 
-# ------------ FANCY PLOTTING STUFF -------------
+#----------------- Q 1.5 -----------------
+# Explore phase portrait across range of applied currents
+def move_through_Iapp():
+    # move through a range of possible applied currents
+    x0 = None
+    critical_region = np.arange(1.1, 1.4, 0.025) # -> bifurcation around 1.29
+    full_range = np.concat([np.arange(0, critical_region[0], 0.1), critical_region, np.arange(critical_region[-1], 6, 0.1)])
+    full_range = np.arange(5.775, 6.2, 0.1)
+    # x0s = []
+    for Iapp in full_range:
+        # Iapp = round(Iapp, 2)
+        # continuation - using the equilibrium from the previous bifurcation parameter
+        x0 = phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=300, I = Iapp, plot=True, save=True)
+        print(f'Phase portrait for Iapp = {round(Iapp, 4)} done!')
+        # x0s.append(x0)
+
+
+# ------------ FANCY PLOTTING STUFF (ignore) -------------
 def make_arrow(dx, dy, color='black', arrowstyle='-|>', mutation_scale=15, linewidth=.5):
     arrow = mpatches.FancyArrowPatch((0, 0), (dx, dy),
                                     arrowstyle=arrowstyle,
@@ -561,50 +620,33 @@ if __name__ == '__main__':
                     'z':2, 'F':96520, 'Caout':2, 'R':8313.4, 'T':273.15 + 25,
                     'Cainf':1e-4, 'tauCa':200, 'Beta':0.01}
     '''
-    bifurcations(Irange=(1.0, 1.7), stepsize=1e-3)#, Ivals=full_range, x0vals=x0s)
-    transients()
-
-    # Question 1.2 - decoupled system with no L-type calcium current
-    trajectories = voltage_trace(5000, -70, 1e-4, applied_current = (
-                                                                    2 # constant
-                                                                    # 2, 500, 1000 # stepped
-                                                                    # 1, 500, 5000, 150, 20 # pulsed
-                                                                     ), 
-                                 everything=True, eq_voltages={'El':-70},
-                                 ical = False)
-    trajectories = voltage_trace(50000, -6.78267854e+01, 1.74214550e-02, applied_current = (
-                                                                    0 # constant
-                                                                    # 2, 500, 1000 # stepped
-                                                                    # 3, 500, 5000, 150, 20 # pulsed
-                                                                     ), 
-                                 everything=True, eq_voltages={'El':-70})
+    # # Question 1.2 - decoupled system with no L-type calcium current
+    # trajectories = voltage_trace(5000, -70, 1e-4, applied_current = (
+    #                                                                 2 # constant
+    #                                                                 # 2, 500, 1000 # stepped
+    #                                                                 # 1, 500, 5000, 150, 20 # pulsed
+    #                                                                  ), 
+    #                              everything=True, eq_voltages={'El':-70},
+    #                              ical = False)
+    # trajectories = voltage_trace(50000, -6.78267854e+01, 1.74214550e-02, applied_current = (
+    #                                                                 0 # constant
+    #                                                                 # 2, 500, 1000 # stepped
+    #                                                                 # 3, 500, 5000, 150, 20 # pulsed
+    #                                                                  ), 
+    #                              everything=True, eq_voltages={'El':-70})
     
-    # Question 1.4 
-    window_current()
+    # # Question 1.4 
+    # window_current()
 
-    # Question 1.5 phase portrait and nullclines with constant applied current I(all_t) = 1
-    trajectories = voltage_trace(15000, -70, 1e-4, applied_current = 1, 
-                                 everything=True, eq_voltages={'El':-70},
-                                 name = '(I = 1)')
+    # # Question 1.5 phase portrait and nullclines with constant applied current I(all_t) = 1
+    # phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=300, I = 1, plot=True)
+    # # phase portrait across iapp
+    # move_through_Iapp()
     
-    # move through a range of possible applied currents
-    x0 = None
-    critical_region = np.arange(1.29, 1.5, 0.025) # -> bifurcation around 1.29
-    # -> another bifurcation or something aroun 5.65
-    # full_range = np.concat([np.arange(0, 1.29, 0.1), critical_region, np.arange(1.5, 6, 0.1)])
-    full_range = np.arange(0, 3, 0.1)
-    # x0s = []
-    for Iapp in full_range:
-        # Iapp = round(Iapp, 2)
-        # continuation - using the equilibrium from the previous bifurcation parameter
-        x0 = phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=300, I = Iapp, plot=True)
-        print(f'Phase portrait for Iapp = {round(Iapp, 4)} done!')
-        # x0s.append(x0)
-
     # Question 1.6
-    # TODO: include x0s from before for each I
+    # S3
+    transients()
+    # S4
+    # couldn't get bifurcations to work 100%, used MatCont in the end
+    # bifurcations(Irange=(1.0, 1.7), stepsize=1e-3)#, Ivals=full_range, x0vals=x0s)
 
-''''
-1.6
-Find bifurcation parameters and make bifurcation diagram
-'''
