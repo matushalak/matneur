@@ -28,7 +28,10 @@ def phi(V, Ca, params: dict = {'z':2, 'F':96520, 'Caout':2, 'R':8313.4, 'T':273.
 def Ileak(V, params : dict = {'gL':0.05,'EL':-70}):
     return params['gL'] * (V - params['EL'])
 
-def ICaL(V, Ca, params: dict = {'Pmax': 0.002, 'z':2, 'F':96520, 'Caout':2}):
+def ICaL(V, Ca, 
+         params: dict = {'Pmax': 0,#.002, 
+                        'z':2, 'F':96520, 'Caout':2}
+                                ):
     Idrive = lambda v, ca: params['Pmax'] * params['z'] * params['F'] * phi(v, ca)
     return m(V) * h(Ca) * Idrive(V, Ca)
 
@@ -621,27 +624,21 @@ if __name__ == '__main__':
                     'Cainf':1e-4, 'tauCa':200, 'Beta':0.01}
     '''
     # # Question 1.2 - decoupled system with no L-type calcium current
-    # trajectories = voltage_trace(5000, -70, 1e-4, applied_current = (
-    #                                                                 2 # constant
-    #                                                                 # 2, 500, 1000 # stepped
-    #                                                                 # 1, 500, 5000, 150, 20 # pulsed
-    #                                                                  ), 
-    #                              everything=True, eq_voltages={'El':-70},
-    #                              ical = False)
-    # trajectories = voltage_trace(50000, -6.78267854e+01, 1.74214550e-02, applied_current = (
-    #                                                                 0 # constant
-    #                                                                 # 2, 500, 1000 # stepped
-    #                                                                 # 3, 500, 5000, 150, 20 # pulsed
-    #                                                                  ), 
-    #                              everything=True, eq_voltages={'El':-70})
+    decoupled = voltage_trace(4500, -70, .01, applied_current = (
+                                                                # 0 # constant
+                                                                # 2, 500, 1000 # stepped
+                                                                2, 1000, 3400, 500, 50 # pulsed
+                                                                    ), 
+                                ical=False, # decoupling
+                                everything=True, eq_voltages={'El':-70})
     
     # # Question 1.4 
-    # window_current()
+    window_current()
 
-    # # Question 1.5 phase portrait and nullclines with constant applied current I(all_t) = 1
-    # phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=300, I = 1, plot=True)
+    # Question 1.5 phase portrait and nullclines with constant applied current I(all_t) = 1
+    phase_portait(V_range=(-80, 100), Ca_range=(0, 1.6), density=300, I = 1, plot=True)
     # # phase portrait across iapp
-    # move_through_Iapp()
+    move_through_Iapp()
     
     # Question 1.6
     # S3

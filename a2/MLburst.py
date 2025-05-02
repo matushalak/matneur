@@ -93,7 +93,7 @@ def MLfast(t: float,
 
     return np.array([dVdt, dndt])
 
-def H_of_Ca(Ca, t_trans=1500, t_end=8000, dt_max=0.1,
+def H_of_Ca(Ca, t_trans=6000, t_end=8000,
             epsilon=0.001, mu=0.02):
     """
     Returns   H(Ca) = (1/T) ∫_0^T  dCa/dt dt
@@ -111,7 +111,7 @@ def H_of_Ca(Ca, t_trans=1500, t_end=8000, dt_max=0.1,
             Cm=20, kCa=1.0)
     # ---- integrate fast subsystem long enough to reach the LC ----
     sol = solve_ivp(MLfast, (0, t_end), [-60, 0],
-                    max_step=dt_max, args=(Ca,))
+                    args=(Ca,))
     V = sol.y[0]; t = sol.t
     # breakpoint()
     # ---- find spike peaks in V (prominence filters out noise) ----
@@ -122,7 +122,7 @@ def H_of_Ca(Ca, t_trans=1500, t_end=8000, dt_max=0.1,
     if len(peaks) < 2:
         raise RuntimeError(f'No full cycle detected for Ca={Ca:.3f}')
     # use the two last peaks → one full period
-    k1, k2 = peaks[-3], peaks[-2]
+    k1, k2 = peaks[-2], peaks[-1]
     idx = slice(k1, k2+1)                  # slice of that cycle
     T  = t[k2] - t[k1]                     # period
 
@@ -146,56 +146,64 @@ def q2_2 ():
     plt.show()
 
     fg, tsax = plt.subplots(nrows=3, sharex='col')
-    tsax[0].plot(sol.t, sol.y[0])
+    tsax[0].plot(sol.t, sol.y[0], color = 'magenta')
     tsax[0].set_ylabel('V (mV)')
-    tsax[1].plot(sol.t, sol.y[1])
+    tsax[1].plot(sol.t, sol.y[1],color = 'magenta')
     tsax[1].set_ylabel('n')
-    tsax[2].plot(sol.t, sol.y[2])
+    tsax[2].plot(sol.t, sol.y[2],color = 'magenta')
     tsax[2].set_ylabel('[Ca]')
     tsax[2].set_xlabel('time (ms)')
     plt.tight_layout()
+    plt.savefig('Q2.2traces.png', dpi = 300)
     plt.show()
     plt.close()
 
-def q2_3():
-    Ca_grid = np.linspace(0, 1, 10)
+def q2_3(eps = 1e-3):
+    Ca_grid = np.linspace(0, 2, 100)
     H_vals  = []
 
     for Ca in Ca_grid:
         try:
-            H_vals.append(H_of_Ca(Ca, epsilon=1e-3))
+            H_vals.append(H_of_Ca(Ca, epsilon=eps))
             print(Ca, 'LC found')
         except RuntimeError:
             H_vals.append(np.nan)
             print(Ca, 'LC not found')
     
+    # point closest to 0
+    H0 = np.argmin(np.abs(H_vals))
+    caH0 = Ca_grid[H0]
     plt.plot(Ca_grid, H_vals, 'k-')
+    plt.scatter(caH0, H_vals[H0], s=55, label = f'Ca* = {np.round(caH0, 4)}', color = 'b')
     plt.axhline(0, ls='--', lw=0.7)
     plt.xlabel('[Ca] (fixed parameter)')
     plt.ylabel('H(Ca)')
     plt.title('Average d[Ca]/dt along limit cycle')
+    plt.legend(loc=1)
+    plt.tight_layout()
+    plt.savefig(f'H at eps ({eps}).png', dpi = 300)
     plt.show()
 
 
 def q2_5():
-    for eps in [1e-7, 1e-6, 1e-5, 3e-4, 1e-3, 1e-2, 1e-1, 0.5]:
+    for eps in [3e-4, 5e-4, 6e-4, 7e-4, 1e-3, 2e-3, 5e-3, 1e-2]:
         tspan = (0, 10000)
         y0 = [-60, 0.0, 0.01]
         eps_try = lambda t, vars: MLburst(t=t, y = vars, epsilon=eps)
         sol = solve_ivp(eps_try, tspan, y0, max_step=0.1)
         
-        ax = plt.axes(projection = '3d')
-        ax.plot(sol.y[2], sol.y[1], sol.y[0])
-        ax.set(ylabel = 'n', xlabel = 'Ca', zlabel = 'V')
-        plt.savefig(f'Eps_{eps}3D.png', dpi = 300)
-        plt.show()
+        # ax = plt.axes(projection = '3d')
+        # ax.plot(sol.y[2], sol.y[1], sol.y[0])
+        # ax.set(ylabel = 'n', xlabel = 'Ca', zlabel = 'V')
+        # plt.savefig(f'Eps_{eps}3D.png', dpi = 300)
+        # plt.show()
 
         fg, tsax = plt.subplots(nrows=3, sharex='col')
-        tsax[0].plot(sol.t, sol.y[0])
+        tsax[0].plot(sol.t, sol.y[0], color = 'magenta')
         tsax[0].set_ylabel('V (mV)')
-        tsax[1].plot(sol.t, sol.y[1])
+        tsax[1].plot(sol.t, sol.y[1],color = 'magenta')
         tsax[1].set_ylabel('n')
-        tsax[2].plot(sol.t, sol.y[2])
+        tsax[2].plot(sol.t, sol.y[2],color = 'magenta')
         tsax[2].set_ylabel('[Ca]')
         tsax[2].set_xlabel('time (ms)')
         plt.tight_layout()
@@ -206,7 +214,7 @@ def q2_5():
 def q2_6():
     for mu in [2e-2, 6e-2, 1e-1, 2e-1]:
         tspan = (0, 10000)
-        y0 = [-60, 0.0, 0.01]
+        y0 = [-10, 0.2, 0.25]
         mu_try = lambda t, vars: MLburst(t=t, y = vars, mu=mu)
         sol = solve_ivp(mu_try, tspan, y0, max_step=0.1)
         
@@ -217,11 +225,11 @@ def q2_6():
         plt.show()
 
         fg, tsax = plt.subplots(nrows=3, sharex='col')
-        tsax[0].plot(sol.t, sol.y[0])
+        tsax[0].plot(sol.t, sol.y[0], color = 'magenta')
         tsax[0].set_ylabel('V (mV)')
-        tsax[1].plot(sol.t, sol.y[1])
+        tsax[1].plot(sol.t, sol.y[1],color = 'magenta')
         tsax[1].set_ylabel('n')
-        tsax[2].plot(sol.t, sol.y[2])
+        tsax[2].plot(sol.t, sol.y[2],color = 'magenta')
         tsax[2].set_ylabel('[Ca]')
         tsax[2].set_xlabel('time (ms)')
         plt.tight_layout()
@@ -229,13 +237,15 @@ def q2_6():
         plt.show()
         plt.close()
 if __name__ == '__main__':
-    # q2_2()
+    q2_2()
 
-    # q2_3()
+    q2_3()
 
     # Q2.5
+    for eps in [3e-4, 5e-4, 6e-4, 7e-4, 1e-3, 2e-3, 5e-3, 1e-2]:
+        q2_3(eps)
     # epsilon around 3e-4 leads to spiking eventually; around 1e-3 - 1e-2 bursting, 1e-1 is spiking again
-    # q2_5()
+    q2_5()
 
     # Q2.6
-    q2_6()
+    q2_6() 
