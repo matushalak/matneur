@@ -7,21 +7,30 @@ from collections import defaultdict
 
 
 class CoupledOscillators:
-    epsilon_grid = np.linspace(-5, 5, 1000)
     a_grid1 = np.linspace(-1, -0.05, 9)
+    epsilon_grid = np.linspace(-5, 5, 1000)
     tau_grid1 = np.linspace(-.8,.8,1000)
     
     a_grid2 = np.linspace(-1, 0, 1000)
     tau_grid2 = np.linspace(-.8,.8,9) # symmetric around 0
     
-    def __init__(self):
+    def __init__(self, 
+                 n_epsilon:int|None = None,
+                 n_tau:int|None = None):
+        
+        if n_epsilon is not None:
+            CoupledOscillators.epsilon_grid = np.linspace(-5, 5, n_epsilon)
+        
+        if n_tau is not None:
+            CoupledOscillators.tau_grid1 = np.linspace(-.8,.8,n_tau)
+
         # Sweep a, epsilon and tau grids to find and classify fixed points
         self.fixed_points = self.sweep1()
 
         # Plot results
         self.plot1()
         
-        # Investigating coupling strength(a) as a function of phase difference e
+        # Investigating coupling strength(a) as a function of period difference e
         self.analytical_plot2()
 
     # ∆1 = ∆2 
@@ -34,7 +43,7 @@ class CoupledOscillators:
           tau_n:float, epsilon:float, a:float
           )->float:
         '''
-        Phase-difference map M(tau_n) -> tau_n+1
+        Firing_time map M(tau_n) -> tau_n+1
         '''
         prc1 = self.PRC(a=a, phase=tau_n)
         # 1 here is T0
@@ -77,7 +86,7 @@ class CoupledOscillators:
                 
                 # Check stability
                 stable:list[bool] = []
-                # Synchrony (stable) if derivative of phase difference map < 1
+                # Synchrony (stable) if derivative of firing time map < 1
                 for t_star in equilibria:
                     dM = (self.M(t_star+1e-6, e, a)-self.M(t_star-1e-6, e, a)) / 2e-6
                     stable.append(abs(dM)<1)
@@ -142,7 +151,7 @@ class CoupledOscillators:
                 ax.flatten()[ia].set_ylabel('τ*')
         
         f.tight_layout()
-        f.savefig('Phase_Difference_Maps_plots.png', dpi = 300)
+        f.savefig('Firing_Time_Maps_plots.png', dpi = 300)
         plt.show()
 
     def analytical_plot2(self)-> dict[int:tuple]:
@@ -169,7 +178,7 @@ class CoupledOscillators:
 
                 # Check stability
                 stable:list[bool] = []
-                # Synchrony (stable) if derivative of phase difference map < 1
+                # Synchrony (stable) if derivative of firing time map < 1
                 for e_star, a_star in zip(eps_stars, CoupledOscillators.a_grid2):
                     dM = (self.M(tau+1e-6, e_star, a_star)-self.M(tau-1e-6, e_star, a_star)) / 2e-6
                     stable.append(abs(dM)<1)
@@ -244,7 +253,7 @@ class NeuralFields:
         self.plot_bump(xrange=np.linspace(-10, 15, 200000),
                        x1 = 0, x2 = 6)
         # translation invariant, shift everything to x1 = 0
-        x2s = 6*np.ones(10000)#np.linspace(0.0001, 7, 10000)
+        x2s = 6*np.ones(200000)#np.linspace(0.0001, 7, 10000)
         x1s = np.zeros_like(x2s)
         x_range = np.linspace(-10, 15, x1s.size)
         self.plot_eigenmodes(C = 1, x_range=x_range, x1=x1s, x2=x2s)
@@ -293,63 +302,105 @@ class NeuralFields:
         return z*np.exp(-np.abs(z))
 
     # Question 3
-    def ring_neural_field(self, 
-                          # coupling strength
-                          kappa:float,
-                          h:float = 0.3):
-        '''
-        dt(u) = -µ + kappa * integral[w(x-y) * f(u(y)-h)]dy
-        h = kappa * phi(∆)
-        stability: kappa * w(∆) < 0
-        '''
+    def ring_neural_field(self,
+                          kappa: float,
+                          h: float = 0.3):
         # Spatial grid
-        nx = 1000
-        Lx = 20 # width 20
-        x = np.linspace(-Lx/2,Lx/2,nx)
-        # spacing between points
-        dx = x[1]-x[0] 
+        nx = 500
+        Lx = 20
+        x = np.linspace(-Lx/2, Lx/2, nx)
+        dx = x[1] - x[0]
 
-        # Ring geometry matrix
-        W = np.zeros((nx,nx))
-        y = self.kernel(x)
+        # Build circulant weight matrix
+        W = np.zeros((nx, nx))
+        base = self.kernel(x)
         for i in range(nx):
-            W[i,:] = np.roll(y, i-(nx//2))
-        # scale convolution kernel by uniform spacing between values
+            W[i, :] = np.roll(base, -i)
         W *= dx
 
-        # Neural field RHS
-        rhs = lambda t,u : -u + W * kappa @ self.activation(u, h=h,type='sigmoidal')
+        # RHS for solve_ivp: corrected matrix multiply
+        rhs = lambda t, u: -u + kappa*(W @ self.activation(u, h=h, type='sigmoidal'))
 
+
+        # Prepare 3×3 figure
+        alphas = np.linspace(0.125, 1.125, 9)
+        # plot initial conditions
         # Initial conditions
-        u0 = lambda width: 1 / (np.cosh(width*x)**2)
+        u0plot = lambda width: (1 / (np.cosh(width*x)**2))
         fini, axini = plt.subplots()
-        for ini_param in np.linspace(0.2,1, 8):
-            axini.plot(x, u0(ini_param), label = f'{round(ini_param, 1)}')
+        for ini_param in alphas:
+            axini.plot(x, u0plot(ini_param), label = f'a = {round(ini_param, 1)}')
         
         axini.legend(loc = 1)
         axini.set_ylabel('Cortical activation u(x)')
         axini.set_xlabel('Cortical location (x)')
         fini.tight_layout()
+        fini.savefig('RING_NF_Initial_conditions.png', dpi = 300)
         plt.show()
         plt.close()
+        fig, axes = plt.subplots(3, 3, figsize=(11, 10),
+                                 sharex=True, sharey=True)
+        for i, (ax, alpha) in enumerate(zip(axes.ravel(), alphas)):
+            # initial bump
+            u0 = 1/np.cosh(0.5*alpha*x)**2
 
-        sol = sp_int.solve_ivp(fun=rhs, t_span=[0,1000], y0 = u0(0.2))
-        t = sol.t
-        U = sol.y
-        u_final = U[:, -1] # final timepoint
-        indices = np.where(np.diff(np.sign(u_final - h)))[0]
-        x1 = x[indices[0]]
-        x2 = x[indices[1]]
-        Delta = (x2 - x1) % Lx 
+            # integrate
+            sol = sp_int.solve_ivp(rhs, [0, 20], u0, max_step=0.5)
+            X, T = np.meshgrid(x, sol.t)
+            U = sol.y
 
-        # Simulation result
-        X, T= np.meshgrid(x, t)
-        plt.contourf(X, T, U.T)
-        plt.axvline(x1)
-        plt.axvline(x2)
-        plt.xlabel('Cortical location (x)')
-        plt.ylabel('Time (s)')
-        plt.title(f'Bump width: {round(Delta,2)}, Stable: {True if self.kernel(Delta) < 0 else False}')
+            # detect final threshold‐crossings
+            # detect final threshold‐crossings robustly on the ring
+            u_fin = U[:, -1]
+            mask = (u_fin >= h)
+
+            # split into contiguous above-threshold blocks
+            runs = np.split(
+                np.nonzero(mask)[0],
+                np.where(np.diff(mask) != 0)[0] + 1
+            )
+            # discard any empty runs
+            runs = [r for r in runs if r.size>0]
+
+            if not runs:
+                x1 = x2 = Delta = np.nan
+            else:
+                # pick the run whose center is closest to x=0 (i.e. nx//2)
+                centers = [ (r[0] + r[-1])//2 for r in runs ]
+                best   = np.argmin([abs(c - nx//2) for c in centers])
+                run    = runs[best]
+                i1, i2 = run[0], run[-1]
+
+                # interpolate the left edge between i1-1→i1
+                j0, j1 = (i1-1)%nx, i1
+                t1      = (h - u_fin[j0])/(u_fin[j1] - u_fin[j0])
+                x1      = x[j0] + t1*(x[j1] - x[j0])
+
+                # interpolate the right edge between i2→i2+1
+                k0, k1  = i2, (i2+1)%nx
+                t2      = (h - u_fin[k0])/(u_fin[k1] - u_fin[k0])
+                x2      = x[k0] + t2*(x[k1] - x[k0])
+
+                Delta   = (x2 - x1) % Lx
+
+            # plot
+            cf = ax.contourf(X, T, U.T, levels=15, cmap='viridis')
+            # after computing x1, x2, Delta:
+            x1_wrapped = ((x1 + Lx/2) % Lx) - Lx/2
+            x2_wrapped = ((x2 + Lx/2) % Lx) - Lx/2
+
+            ax.axvline(x1_wrapped, color='white', ls='--')
+            ax.axvline(x2_wrapped, color='white', ls='--')
+            ax.set_title(f'α={alpha:.2f}, Δ={Delta:.2f}, Stable: {True if kappa*self.kernel(Delta) < 0 else False}')
+
+            if i % 3 == 0:
+                ax.set_ylabel('Time (s)')
+            if i>= 6:
+                ax.set_xlabel('Cortical location (x)')
+        fig.colorbar(cf, ax =axes, orientation= 'vertical', label= 'u(x,t)', 
+                     fraction=0.02,pad=-0.1,
+                     )
+        fig.tight_layout(rect=[0, 0, 0.95, 1.0])
         plt.show()
 
 
@@ -361,6 +412,8 @@ class NeuralFields:
         # V+(x) == U'(x)
         Vplus = C*(self.kernel(x_range - x2) + self.kernel(x_range - x1))
         Vminus = C*(self.kernel(x_range - x2) - self.kernel(x_range - x1))
+        # formula for Uprime I derived in 2.3
+        Uprime = self.kernel(x_range - x1) + self.kernel(x2-x_range)
 
         fe, axe = plt.subplots()
         axe.axvline(x = x1[0], label = 'x1', 
@@ -368,13 +421,18 @@ class NeuralFields:
         axe.axvline(x = x2[0], label = 'x2', 
                     alpha = 0.6, color = 'k', linestyle = '-.')
         
-        axe.plot(x_range, Vplus, color = 'green', label = 'V+(x)')
-        axe.plot(x_range, Vminus, color = 'red', label = 'V-(x)')
+        axe.plot(x_range, Vplus, color = 'green', label = 'V+(x)',
+                 linewidth = 2)
+        axe.plot(x_range, Vminus, color = 'red', label = 'V-(x)',
+                 alpha = 0.7)
+        axe.plot(x_range, Uprime,label = "U'(x)", 
+                 color = 'blue', linestyle = ':', linewidth = 3)
 
         axe.set_ylabel('Eigenmode V±(x)')
         axe.set_xlabel('Cortex location x')
         axe.legend(loc=1)
         fe.tight_layout()
+        fe.savefig(f'Eigenmodes_∆{np.mean(x2)}.png', dpi = 300)
         plt.show()
 
     def plot_bump_bifurcation(self, 
@@ -409,9 +467,10 @@ class NeuralFields:
 
         
         axb.scatter(h_s[h_star_i], bump_widths[h_star_i], 
-                    color = 'gold', label = 'h*', s = 100)
+                    color = 'gold', label = r'${h* = \frac{1}{e}}$', s = 100)
         axb.legend(loc = 1)
         fb.tight_layout()
+        fb.savefig(f'Bumb bifurcation_stability({stability}).png', dpi = 300)
         plt.show()
 
     def plot_bump(self, xrange:np.ndarray,
@@ -423,18 +482,25 @@ class NeuralFields:
         if ax is None:
             f, ax = plt.subplots()
             # x < 0
-            ax.plot(xrange[xrange<=x1], Ux[xrange<=x1], color = 'silver', linestyle = '--')
+            ax.plot(xrange[xrange<=x1], Ux[xrange<=x1], label= r'$x<x_1$',
+                    color = 'silver', linestyle = '--')
             # x1 <= x <= x2
-            ax.plot(xrange[((xrange>x1) & (xrange<x2))], Ux[((xrange>x1) & (xrange<x2))], color = 'dodgerblue')
+            ax.plot(xrange[((xrange>x1) & (xrange<x2))], Ux[((xrange>x1) & (xrange<x2))], 
+                    label = r'${x_1 \leq x \leq x_2}$',
+                    color = 'dodgerblue')
             # x > x2
-            ax.plot(xrange[xrange>=x2], Ux[xrange>=x2], color = 'black', linestyle = '--')
+            ax.plot(xrange[xrange>=x2], Ux[xrange>=x2], 
+                    label= r'$x > x_2$ ',
+                    color = 'black', linestyle = '--')
 
-            ax.axhline(y = self.phi(x2-x1), color = 'orange')
+            ax.axhline(y = self.phi(x2-x1), color = 'orange', label = 'Threshold h')
 
             ax.set_xlabel('Cortex location x')
             ax.set_ylabel('Cortical activity u(x)')
+            ax.legend(loc = 1)
 
-            plt.tight_layout()
+            f.tight_layout()
+            f.savefig(f'Bump_plot_∆={np.mean(x2-x1)}.png', dpi = 300)
             plt.show()
 
         else:
@@ -469,7 +535,10 @@ class NeuralFields:
 
 if __name__ == '__main__':
     # Question 1 - Coupled Oscillators and Phase Difference Maps
-    # CO = CoupledOscillators()
+    # for truly nice graphs with all the saddle node bifurcations
+    # need to set higher resolution for tau and epsilon (both to 10000)
+    # at None does default with 1000 each
+    # CO = CoupledOscillators(n_tau=None, n_epsilon=None)
 
     # Questions 2 & 3 - Neural Field Models
     NF = NeuralFields()
