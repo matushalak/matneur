@@ -503,13 +503,13 @@ if __name__ == '__main__':
     # for truly nice graphs with all the saddle node bifurcations
     # need to set higher resolution for tau and epsilon (both to 10000)
     # at None does default with 1000 each
-    # CO = CoupledOscillators(n_tau=None, n_epsilon=None)
+    CO = CoupledOscillators(n_tau=None, n_epsilon=None)
 
     # Questions 2 & 3 - Neural Field Models
     NF = NeuralFields()
     
     # Question 2 - Amari approach
-    # NF.Amari()
+    NF.Amari()
 
     # Question 3 - Ring neural field
     NF.Ring()
