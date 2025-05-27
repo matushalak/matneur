@@ -1,76 +1,55 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
+from typing import Literal
+import adEx_utils
+import adEx_models as adEx
 
-# Parameters (from Brette & Gerstner 2005, Table 1, "regular spiking")
-C = 281.0     # pF
-gL = 30.0     # nS
-EL = -70.6    # mV
-VT = -50.4    # mV
-DeltaT = 2.0  # mV
-Vreset = EL # mV
-Vpeak = -20.0 # mV
-tauw = 144.0  # ms
-a = 4.0       # nS
-b = 0.0805    # nA
+'''
+Default parameters Brette & Gerstner (2005)
+'C' : 281.0,     # pF
+'gL' : 30.0,     # nS
+'EL' : -70.6,    # mV
+'VT' : -50.4,    # mV
+'DeltaT' : 2.0,   # mV
+'Vreset' : -70.6, # mV
+'Vpeak' : 0, # mV - can't be more than 5 due to numerical overflow in scipy
+Time constant of adaptation
+    'tauw' : 144.0,  # ms
+    How fast the is the evolution of the adaptation variable (w)
+    Lower values make it faster, higher values make it slower
+    at tauw = 1, there is no separation of timescales anymore
+Subthreshold adaptation (regardless of spikes, purely to voltage changes)
+    default 'a' : 4.0,       # nS 
+    the lower this is, the more the adaptation variable (w) just decays to 0 after a spike
+    the higher this is, the more the adaptation variable (w) responds to the input signal regardless of spikes as a "leak" current
+Spike-triggered adaptation
+    default 'b' : 80.5    # pA !!!
+    how much adaptation variable (w) if offset after a spike
+    higher values mean voltage must overcome that many more mV before next spike can be triggered
+'''
+### Basic model without synapses experiments
+# Custom input current
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Tmax = 5000,
+                                                                custom = lambda t: np.random.normal(loc = 625, scale = 500) 
+                                                                if t % 500 < 250 else np.random.normal(loc = 550, scale = 500))
+adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-def I(t):
-    return 2000*np.sin(0.005*t).__abs__()
-    # return 500 if 50 < t < 250 else (0.0 if t < 500 else 700)
+# Default experiment - pulsed current (not in original paper)
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment() # returns the same as adEx.utils.default_experiment()
+adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-def aEIF(t, y):
-    V, w = y
-    dVdt = (-gL * (V - EL) + gL * DeltaT * np.exp((V - VT)/DeltaT) - w + I(t)) / C
-    dwdt = (a * (V - EL) - w) / tauw
-    return [dVdt, dwdt]
+# Figure 1C - Voltage response to small and large current
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Vpeak = -20, figure = 'small_large')
+adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-def spike_event(t, y):
-    return y[0] - Vpeak
-spike_event.terminal = True
-spike_event.direction = 1
+# Figure 2C - Bursting Voltage response to small and large current when setting Vreset = -47
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Vreset = -47, figure = 'small_large')
+adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-Tmax = 1000
-dt = 0.1
-t_all = []
-V_all = []
-w_all = []
-spike_times = []
+# Figure 2D - Postinhibitory Rebound Voltage response to hyperpolarization when setting EL = -60, a = 80, tauw = 720
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(EL = -60, Vreset = -60, a = 80, tauw = 720, figure = 'hyperpol')
+adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-t0 = 0.0
-y0 = [EL, 0.0]
-while t0 < Tmax:
-    sol = solve_ivp(aEIF, (t0, Tmax), y0, events=spike_event, max_step=dt, t_eval=np.arange(t0, Tmax, dt))
-    t_all.extend(sol.t)
-    V_all.extend(sol.y[0])
-    V_all[-1] = Vpeak
-    w_all.extend(sol.y[1])
-    if sol.t_events[0].size > 0:
-        t_spike = sol.t_events[0][0]
-        spike_times.append(t_spike)
-        print(f"Spike at t = {t_spike:.2f} ms, V = {sol.y_events[0][0][0]:.2f}")
-        # Reset for next interval
-        y0 = [Vreset, sol.y[1,-1] + b]
-        t0 = t_spike + dt
-        # Manually add Vreset to trace for visualization
-        t_all.append(t0)
-        V_all.append(Vreset)
-        w_all.append(sol.y[1,-1] + b)
-    else:
-        break
 
-f, ax = plt.subplots(nrows=3, figsize = (9, 9))
-ax[0].plot(t_all, V_all, label='V')
-ax[0].set_ylabel('Membrane potential (mV)')
-
-ax[1].plot(t_all, w_all, label='w')
-ax[1].set_ylabel('Adaptation variable')
-
-ax[2].plot(t_all, [I(t) for t in t_all], label='I')
-ax[2].set_ylabel('Input current')
-
-ax[2].set_xlabel('Time (ms)')
-f.suptitle('aEIF neuron with event-based spiking')
-plt.tight_layout()
-plt.show()
-
-print(f"Total spikes: {len(spike_times)}")
+### Model WITH synapses experiments
