@@ -1,9 +1,10 @@
 # adex_cython.pyx
-import numpy as np
-cimport numpy as np
+#import numpy as np
+#cimport numpy as np
 from cython cimport boundscheck, wraparound
+from libc.math cimport exp
 
-ctypedef np.float64_t DTYPE_t
+#ctypedef np.float64_t DTYPE_t
 
 @boundscheck(False)
 @wraparound(False)
@@ -67,7 +68,7 @@ def adExcython_wrapper(double t,
 
     # membrane equation
     dVdt = ( -gL*(V - EL)
-            + gL*DeltaT*np.exp((V - VT)/DeltaT)
+            + gL*DeltaT*exp((V - VT)/DeltaT)
             - w
             + Iapp
             ) / C

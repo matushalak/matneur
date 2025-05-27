@@ -32,26 +32,27 @@ Spike-triggered adaptation
 ### Basic model without synapses experiments
 start = time()
 # Custom input current
-Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Tmax = 720 * 47,
-                                                                custom = lambda t: np.random.normal(loc = 625, scale = 500) 
-                                                                if t % 500 < 250 else np.random.normal(loc = 550, scale = 500))
+np.random.seed(1)
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Tmax = 720 *47 , tauw = 50, a= 6, 
+                                                                custom = lambda t: np.random.normal(loc = 775, scale = 500) 
+                                                                if t % 47 < 15 and t > 15 else np.random.normal(loc = 550, scale = 500))
 adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-# # Default experiment - pulsed current (not in original paper)
-Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Tmax = 720*47) # returns the same as adEx.utils.default_experiment()
-adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
+# # # Default experiment - pulsed current (not in original paper)
+# Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment() # returns the same as adEx.utils.default_experiment()
+# adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-# Figure 1C - Voltage response to small and large current
-Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Vpeak = -20, figure = 'small_large')
-adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
+# # Figure 1C - Voltage response to small and large current
+# Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Vpeak = -20, figure = 'small_large')
+# adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-# Figure 2C - Bursting Voltage response to small and large current when setting Vreset = -47
-Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Vreset = -47, figure = 'small_large')
-adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
+# # Figure 2C - Bursting Voltage response to small and large current when setting Vreset = -47
+# Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Vreset = -47, figure = 'small_large')
+# adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-# Figure 2D - Postinhibitory Rebound Voltage response to hyperpolarization when setting EL = -60, a = 80, tauw = 720
-Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(EL = -60, Vreset = -60, a = 80, tau_w = 720, figure = 'hyperpol')
-adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
+# # Figure 2D - Postinhibitory Rebound Voltage response to hyperpolarization when setting EL = -60, a = 80, tauw = 720
+# Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(EL = -60, Vreset = -60, a = 80, tauw = 720, figure = 'hyperpol')
+# adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
 print(time()-start)
 

@@ -1,5 +1,6 @@
 # @matushalak
 import numpy as np
+import numba as nb
 
 ###---Adaptive exponential and fire model definitions---
 def nosynapse(t:float, y:tuple[float, float], 

@@ -3,14 +3,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from typing import Literal
-from adex_cython import adExcython_wrapper
-from adex_rk4 import integrate_adex_rk4
+
+# optimizations
+import numba as nb
+from adex_cython import adExcython_wrapper # conversion to C too expensive because solve_ivp in python
 
 # Default Experimental parameters from original definition of adEx model!
 # Parameters (from Brette & Gerstner 2005, Table 1, "regular spiking")
 def default_experiment()->tuple[int, float, dict, dict, callable]:
     Tmax = 1000
     dt = 0.1
+    
     model_params = {
         'C' : 281.0,     # pF
         'gL' : 30.0,     # nS
@@ -18,8 +21,8 @@ def default_experiment()->tuple[int, float, dict, dict, callable]:
         'VT' : -50.4,    # mV
         'DeltaT' : 2.0,   # mV
         'Vreset' : -70.6, # mV
-        'Vpeak' : 0, # mV - can't be more than 5 due to numerical overflow in scipy
-        'tau_w' : 144.0,  # ms
+        'Vpeak' : 0.0, # mV - can't be more than 5 due to numerical overflow in scipy
+        'tauw' : 144.0,  # ms
         'a' : 4.0,       # nS
         'b' : 80.5    # pA !!!!
     }
@@ -88,66 +91,103 @@ def Iapp(t:float,
         # Fig 3D - rebound spike
         return -800 if 10 < t < 410 else 0
 
+def forward_euler(ADEX:callable, y0:tuple[float, float], dt:float, model_params:dict, ts:np.ndarray, currents:np.ndarray):
+    V, w = y0
+    Vout = np.zeros_like(ts)
+    wout = np.zeros_like(ts)
+    spts = np.zeros_like(ts, dtype=bool)
 
-def run_experiment(adExModel:callable, Tmax:int, dt:float, model_params:dict, Iapp:callable):
+    for i, t in enumerate(ts):
+        dV, dw = ADEX(t=t, y=[V, w], I = currents[i], params = model_params)
+        # need to get change PER dt
+        V2, w2 = V + dV*dt, w+dw*dt
+        # spike
+        if V2 >= model_params['Vpeak']:
+            V2 = model_params['Vreset']
+            w2 = w + model_params['b']
+            # Count spike occured at this time
+            spts[i] = True
+            Vout[i-1] = model_params['Vpeak']
+        
+        # save results
+        V, w = V2, w2
+        Vout[i] = V
+        wout[i] = w
+    
+    return Vout, wout, spts, ts
+
+
+def run_experiment(adExModel:callable, Tmax:int, dt:float, model_params:dict, Iapp:callable, 
+                   plot:bool = False, simple:bool = False):
     '''
     Runs entire experiment for adEx model of choice with model and experimental parameters of choice
     '''        
-    def spike_event(t, y):
-        return y[0] - model_params['Vpeak']
-    spike_event.terminal = True
-    spike_event.direction = 1
-
-    t_all = []
-    V_all = []
-    w_all = []
-    spike_times = []
-
-    t0 = 0.0
     y0 = [model_params['EL'], 0.0]
+    t0 = 0.0
 
-    ts = np.arange(t0, Tmax, dt)
-    all_curr = np.array([Iapp(t) for t in ts], dtype=float)
-    # model = lambda t, y: adExModel(t, y, params=model_params, I = Iapp(t))
-    # model = lambda t, y: adExcython_wrapper(t, y, params=model_params, t_array = ts, i_array = all_curr)
+    # Clock-based simulator (constant step sizes), simple forward euler method
+    if simple:
+        ts = np.arange(t0, Tmax, dt)
+        all_curr = np.array([Iapp(t) for t in ts], dtype=float)
+        V_all, w_all, spikes, t_all = forward_euler(ADEX=adExModel, y0=y0, dt=dt,
+                                                    model_params=model_params, ts= ts, 
+                                                    currents=all_curr)
+        spike_times = t_all[spikes]
+    
+    # Event-based simulator (adaptive step sizes)
+    else:
+        def spike_event(t, y):
+            return y[0] - model_params['Vpeak']
+        spike_event.terminal = True
+        spike_event.direction = 1
 
-    # while t0 < Tmax:
-    #     sol = solve_ivp(fun=model, t_span=(t0, Tmax), y0 = y0, 
-    #                     events=spike_event, max_step=dt, t_eval=ts[len(t_all):],
-    #                     )
-    #     t_all.extend(sol.t)
-    #     V_all.extend(sol.y[0])
-    #     w_all.extend(sol.y[1])
-    #     if sol.t_events[0].size > 0:
-    #         V_all[-1] = model_params['Vpeak']
-    #         t_spike = sol.t_events[0][0]
-    #         spike_times.append(t_spike)
-    #         print(f"Spike at t = {t_spike:.2f} ms, V = {sol.y_events[0][0][0]:.2f}", flush=True)
-    #         # Reset for next interval
-    #         y0 = [model_params['Vreset'], sol.y[1,-1] + model_params['b']]
-    #         t0 = t_spike
-    #         # Manually add Vreset to trace for visualization
-    #         t_all.append(t0)
-    #         V_all.append(model_params['Vreset'])
-    #         w_all.append(y0[1])
-    #     else:
-    #         break
-    t_all, V_all, w_all, spike_times = integrate_adex_rk4(all_curr, dt, model_params,
-                                                          Tmax, model_params['EL'], 0.0)
-    # breakpoint()
-    f, ax = plt.subplots(nrows=3, figsize = (9, 9), sharex='all')
-    ax[0].plot(t_all, V_all, label='V')
-    ax[0].set_ylabel('Membrane potential (mV)')
+        t_all = []
+        V_all = []
+        w_all = []
+        spike_times = []
 
-    ax[1].plot(t_all, w_all, label='w')
-    ax[1].set_ylabel('Adaptation variable (w)')
+        model = lambda t, y: adExModel(t, y, params=model_params, I = Iapp(t))
+        # cython wrapper
+        # model = lambda t, y: adExcython_wrapper(t, y, params=model_params, t_array = ts, i_array = all_curr)
 
-    ax[2].plot(t_all, [Iapp(t) for t in t_all], label='I')
-    ax[2].set_ylabel('Input current')
+        while t0 < Tmax:
+            # this is the slow step, each lambda call + solve_ivp is implemented in Python!
+            # simply cython does not solve the problem
+            sol = solve_ivp(fun=model, t_span=(t0, Tmax), y0 = y0, 
+                            events=spike_event, max_step=dt, t_eval=np.arange(t0, Tmax, dt),
+                            )
+            t_all.extend(sol.t)
+            V_all.extend(sol.y[0])
+            w_all.extend(sol.y[1])
+            if sol.t_events[0].size > 0:
+                V_all[-1] = model_params['Vpeak']
+                t_spike = sol.t_events[0][0]
+                spike_times.append(t_spike)
+                # print(f"Spike at t = {t_spike:.2f} ms, V = {sol.y_events[0][0][0]:.2f}", flush=True)
+                # Reset for next interval
+                y0 = [model_params['Vreset'], sol.y[1,-1] + model_params['b']]
+                t0 = t_spike
+                # Manually add Vreset to trace for visualization
+                t_all.append(t0)
+                V_all.append(model_params['Vreset'])
+                w_all.append(y0[1])
+            else:
+                break
+    
+    if plot:
+        f, ax = plt.subplots(nrows=3, figsize = (9, 9), sharex='all')
+        ax[0].plot(t_all, V_all, label='V')
+        ax[0].set_ylabel('Membrane potential (mV)')
 
-    ax[2].set_xlabel('Time (ms)')
-    f.suptitle('aEIF neuron with event-based spiking')
-    plt.tight_layout()
-    plt.show()
+        ax[1].plot(t_all, w_all, label='w')
+        ax[1].set_ylabel('Adaptation variable (w)')
+
+        ax[2].plot(t_all, [Iapp(t) for t in t_all], label='I')
+        ax[2].set_ylabel('Input current')
+
+        ax[2].set_xlabel('Time (ms)')
+        f.suptitle('aEIF neuron with event-based spiking')
+        plt.tight_layout()
+        plt.show()
 
     print(f"Total spikes: {len(spike_times)}", flush=True)
