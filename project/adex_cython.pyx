@@ -1,26 +1,55 @@
-from libc.math cimport exp
-cimport numpy as np
+# adex_cython.pyx
 import numpy as np
+cimport numpy as np
+from cython cimport boundscheck, wraparound
 
-# This C function remains the same
-cdef int calculate_derivatives_c(double t, double V, double w,
-                                double C,
-                                double gL, double EL, double DeltaT, double VT, 
-                                double a, double tauw, double I,
-                                double* dVdt_ptr, double* dwdt_ptr):
-    dVdt_ptr[0] = (-gL * (V - EL) + gL * DeltaT * exp((V - VT)/DeltaT) - w + I) / C
-    dwdt_ptr[0] = (a * (V - EL) - w) / tauw
-    return 0
+ctypedef np.float64_t DTYPE_t
 
-# Python wrapper function - THIS is what solve_ivp calls.
-# It MUST match the signature expected by solve_ivp + args.
-# Note: We pass 'params' and 'Iapp' via the 'args' tuple.
-def adExModel_cython_wrapper(double t, np.ndarray[double, ndim=1] y, dict params, double Ival):
-    # cdef double V = y[0] # Using np.ndarray is better
-    # cdef double w = y[1]
-    cdef double V = y[0]
-    cdef double w = y[1]
-    cdef double dVdt, dwdt # C doubles for output
+@boundscheck(False)
+@wraparound(False)
+cdef double interp_linear(double t,
+                          double* t_ptr,
+                          double* i_ptr,
+                          Py_ssize_t n):
+    cdef Py_ssize_t lo = 0, hi = n - 1, mid
+    # clamp
+    if t <= t_ptr[0]:
+        return i_ptr[0]
+    elif t >= t_ptr[hi]:
+        return i_ptr[hi]
+    # binary search for the first index where t_ptr[mid] > t
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if t_ptr[mid] <= t:
+            lo = mid + 1
+        else:
+            hi = mid
+    # now lo is the upper bracket
+    cdef Py_ssize_t j = lo - 1
+    cdef double t0 = t_ptr[j]
+    cdef double t1 = t_ptr[j+1]
+    cdef double i0 = i_ptr[j]
+    cdef double i1 = i_ptr[j+1]
+    return i0 + (i1 - i0)*(t - t0)/(t1 - t0)
+
+def adExcython_wrapper(double t,
+                    double[:] y,       # state vector
+                    dict params,
+                    double[:] t_array,
+                    double[:] i_array):
+    """
+    t       : current time
+    y       : [V, w]
+    t_array : input times
+    i_array : input current values
+    """
+    cdef double Iapp
+    cdef double* t_ptr = &t_array[0]
+    cdef double* i_ptr = &i_array[0]
+    cdef Py_ssize_t   n    = t_array.shape[0]
+
+    # 1) interpolate Iapp at this t
+    Iapp = interp_linear(t, t_ptr, i_ptr, n)
 
     # Extract params (still has dict lookup overhead)
     cdef double C = params['C']
@@ -31,11 +60,19 @@ def adExModel_cython_wrapper(double t, np.ndarray[double, ndim=1] y, dict params
     cdef double a = params['a']
     cdef double tauw = params['tauw']
 
-    # --- CORRECTLY call the C function ---
-    calculate_derivatives_c(t, V, w,               # Pass inputs by value
-                          C, gL, EL, DeltaT, VT,  # Pass params by value
-                          a, tauw, Ival,          # Pass I_val by value
-                          &dVdt, &dwdt)          # Pass outputs by address
+    cdef double V = y[0]
+    cdef double w = y[1]
 
-    # Return as a Python list (or NumPy array)
+    cdef double dVdt, dwdt # C doubles for output
+
+    # membrane equation
+    dVdt = ( -gL*(V - EL)
+            + gL*DeltaT*np.exp((V - VT)/DeltaT)
+            - w
+            + Iapp
+            ) / C
+
+    # adaptation variable
+    dwdt = ( a*(V - EL) - w )/tauw
+
     return [dVdt, dwdt]

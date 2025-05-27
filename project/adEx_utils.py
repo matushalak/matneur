@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from typing import Literal
-from adex_cython import adExModel_cython_wrapper
-
+from adex_cython import adExcython_wrapper
+from adex_rk4 import integrate_adex_rk4
 
 # Default Experimental parameters from original definition of adEx model!
 # Parameters (from Brette & Gerstner 2005, Table 1, "regular spiking")
@@ -19,7 +19,7 @@ def default_experiment()->tuple[int, float, dict, dict, callable]:
         'DeltaT' : 2.0,   # mV
         'Vreset' : -70.6, # mV
         'Vpeak' : 0, # mV - can't be more than 5 due to numerical overflow in scipy
-        'tauw' : 144.0,  # ms
+        'tau_w' : 144.0,  # ms
         'a' : 4.0,       # nS
         'b' : 80.5    # pA !!!!
     }
@@ -106,32 +106,35 @@ def run_experiment(adExModel:callable, Tmax:int, dt:float, model_params:dict, Ia
     t0 = 0.0
     y0 = [model_params['EL'], 0.0]
 
-    ts = np.arange(t0, Tmax, dt).tolist()
-    all_curr = [Iapp(t) for t in ts]
+    ts = np.arange(t0, Tmax, dt)
+    all_curr = np.array([Iapp(t) for t in ts], dtype=float)
     # model = lambda t, y: adExModel(t, y, params=model_params, I = Iapp(t))
-    model = lambda t, y: adExModel_cython_wrapper(t, y, params=model_params, Ival = all_curr[ts.index(t)])
+    # model = lambda t, y: adExcython_wrapper(t, y, params=model_params, t_array = ts, i_array = all_curr)
 
-    while t0 < Tmax:
-        sol = solve_ivp(fun=model, t_span=(t0, Tmax), y0 = y0, 
-                        events=spike_event, max_step=dt, t_eval=np.arange(t0, Tmax, dt),
-                        )
-        t_all.extend(sol.t)
-        V_all.extend(sol.y[0])
-        w_all.extend(sol.y[1])
-        if sol.t_events[0].size > 0:
-            V_all[-1] = model_params['Vpeak']
-            t_spike = sol.t_events[0][0]
-            spike_times.append(t_spike)
-            print(f"Spike at t = {t_spike:.2f} ms, V = {sol.y_events[0][0][0]:.2f}")
-            # Reset for next interval
-            y0 = [model_params['Vreset'], sol.y[1,-1] + model_params['b']]
-            t0 = t_spike
-            # Manually add Vreset to trace for visualization
-            t_all.append(t0)
-            V_all.append(model_params['Vreset'])
-            w_all.append(y0[1])
-        else:
-            break
+    # while t0 < Tmax:
+    #     sol = solve_ivp(fun=model, t_span=(t0, Tmax), y0 = y0, 
+    #                     events=spike_event, max_step=dt, t_eval=ts[len(t_all):],
+    #                     )
+    #     t_all.extend(sol.t)
+    #     V_all.extend(sol.y[0])
+    #     w_all.extend(sol.y[1])
+    #     if sol.t_events[0].size > 0:
+    #         V_all[-1] = model_params['Vpeak']
+    #         t_spike = sol.t_events[0][0]
+    #         spike_times.append(t_spike)
+    #         print(f"Spike at t = {t_spike:.2f} ms, V = {sol.y_events[0][0][0]:.2f}", flush=True)
+    #         # Reset for next interval
+    #         y0 = [model_params['Vreset'], sol.y[1,-1] + model_params['b']]
+    #         t0 = t_spike
+    #         # Manually add Vreset to trace for visualization
+    #         t_all.append(t0)
+    #         V_all.append(model_params['Vreset'])
+    #         w_all.append(y0[1])
+    #     else:
+    #         break
+    t_all, V_all, w_all, spike_times = integrate_adex_rk4(all_curr, dt, model_params,
+                                                          Tmax, model_params['EL'], 0.0)
+    # breakpoint()
     f, ax = plt.subplots(nrows=3, figsize = (9, 9), sharex='all')
     ax[0].plot(t_all, V_all, label='V')
     ax[0].set_ylabel('Membrane potential (mV)')
@@ -147,4 +150,4 @@ def run_experiment(adExModel:callable, Tmax:int, dt:float, model_params:dict, Ia
     plt.tight_layout()
     plt.show()
 
-    print(f"Total spikes: {len(spike_times)}")
+    print(f"Total spikes: {len(spike_times)}", flush=True)

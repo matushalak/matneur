@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from typing import Literal
+from time import time
 import adEx_utils
 import adEx_models as adEx
 
@@ -29,14 +30,15 @@ Spike-triggered adaptation
     higher values mean voltage must overcome that many more mV before next spike can be triggered
 '''
 ### Basic model without synapses experiments
+start = time()
 # Custom input current
-Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Tmax = 5000,
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Tmax = 720 * 47,
                                                                 custom = lambda t: np.random.normal(loc = 625, scale = 500) 
                                                                 if t % 500 < 250 else np.random.normal(loc = 550, scale = 500))
 adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
-# Default experiment - pulsed current (not in original paper)
-Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment() # returns the same as adEx.utils.default_experiment()
+# # Default experiment - pulsed current (not in original paper)
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Tmax = 720*47) # returns the same as adEx.utils.default_experiment()
 adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
 # Figure 1C - Voltage response to small and large current
@@ -48,8 +50,9 @@ Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(Vreset = -47, fi
 adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
 # Figure 2D - Postinhibitory Rebound Voltage response to hyperpolarization when setting EL = -60, a = 80, tauw = 720
-Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(EL = -60, Vreset = -60, a = 80, tauw = 720, figure = 'hyperpol')
+Tmax, dt, model_params, _, Iapp =  adEx_utils.define_experiment(EL = -60, Vreset = -60, a = 80, tau_w = 720, figure = 'hyperpol')
 adEx_utils.run_experiment(adExModel=adEx.nosynapse, Tmax=Tmax, dt = dt, model_params=model_params, Iapp=Iapp)
 
+print(time()-start)
 
-### Model WITH synapses experiments
+# ### Model WITH synapses experiments
