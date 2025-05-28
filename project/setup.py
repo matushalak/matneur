@@ -16,3 +16,16 @@ setup(
     ext_modules=cythonize(extensions, language_level="3"),
     zip_safe=False,
 )
+
+extensions = [
+    Extension(
+        "adex_euler",
+        ["adex_euler.pyx"],
+        include_dirs=[numpy.get_include()],
+    )
+]
+
+setup(
+    name="adex_euler",
+    ext_modules=cythonize(extensions, language_level="3")
+)

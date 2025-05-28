@@ -6,7 +6,8 @@ from typing import Literal
 
 # optimizations
 import numba as nb
-from adex_cython import adExcython_wrapper # conversion to C too expensive because solve_ivp in python
+from adex_euler import forward_euler_cython
+# from adex_cython import adExcython_wrapper # conversion to C too expensive because solve_ivp in python
 
 # Default Experimental parameters from original definition of adEx model!
 # Parameters (from Brette & Gerstner 2005, Table 1, "regular spiking")
@@ -91,19 +92,25 @@ def Iapp(t:float,
         # Fig 3D - rebound spike
         return -800 if 10 < t < 410 else 0
 
+
 @nb.njit(fastmath = True)
-def forward_euler(y0:tuple[float, float], dt:float, 
-                  model_params:tuple[float,...], reset_params:tuple[float,...],
-                  ts:np.ndarray, currents:np.ndarray):
+def nosynapse_euler(y0:tuple[float, float], dt:float, 
+                    model_params:tuple[float,...], 
+                    reset_params:tuple[float,...],
+                    currents:np.ndarray):
+    '''
+    Runs the entire forward euler integration method
+    '''
     V, w = y0
-    Vout = np.zeros(ts.size, dtype=np.float64)
-    wout = np.zeros(ts.size, dtype=np.float64)
-    spts = np.zeros(ts.size, dtype=np.bool)
+    nsamples = currents.size
+    Vout = np.zeros(nsamples, dtype=np.float64)
+    wout = np.zeros(nsamples, dtype=np.float64)
+    spts = np.zeros(nsamples, dtype=np.bool)
 
     # unpack reset parameters
     Vpeak, Vreset, b = reset_params
     C, gL, EL, VT, DeltaT, tauw, a = model_params
-    for i, t in enumerate(ts):
+    for i in range(nsamples):
         '''
         Brette & Gerstner 2005 adEx neuron WITHOUT synapses
         responding to input current
@@ -111,7 +118,6 @@ def forward_euler(y0:tuple[float, float], dt:float,
         dV = (-gL * (V - EL) + gL * DeltaT * np.exp((V - VT)/DeltaT) - w + currents[i]) / C
         dw = (a * (V - EL) - w) / tauw
 
-        # dV, dw = ADEX(t=t, y=(V, w), I = currents[i], params = model_params)
         # need to get change PER dt
         V2, w2 = V + dV*dt, w+dw*dt
         # spike
@@ -127,7 +133,7 @@ def forward_euler(y0:tuple[float, float], dt:float,
         Vout[i] = V
         wout[i] = w
     
-    return Vout, wout, spts, ts
+    return Vout, wout, spts
 
 
 def run_experiment(adExModel:callable, Tmax:int, dt:float, model_params:dict, Iapp:callable, 
@@ -144,12 +150,17 @@ def run_experiment(adExModel:callable, Tmax:int, dt:float, model_params:dict, Ia
     if simple:
         model_tuple = tuple([model_params[par] for par in ['C', 'gL', 'EL', 'VT', 'DeltaT', 'tauw', 'a']])
         reset_tuple = tuple([model_params[par] for par in ['Vpeak', 'Vreset', 'b']])
-        V_all, w_all, spikes, t_all = forward_euler(y0=y0, dt=dt,
+        # V_all, w_all, spikes = nosynapse_euler(y0=y0, dt=dt,
+        #                                        model_params=model_tuple, 
+        #                                        reset_params=reset_tuple,
+        #                                        currents=all_curr)
+        V_all, w_all, spikes = forward_euler_cython(V0=y0[0], w0 = y0[1],dt=dt,
                                                     model_params=model_tuple, 
                                                     reset_params=reset_tuple,
-                                                    ts= ts, 
                                                     currents=all_curr)
-        # spikes = np.array(spikes, dtype=bool)
+        spikes = np.array(spikes, dtype=bool)
+        
+        t_all = ts
         spike_times = t_all[spikes]
     
     # Event-based simulator (adaptive step sizes)

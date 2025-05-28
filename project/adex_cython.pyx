@@ -1,10 +1,6 @@
 # adex_cython.pyx
-#import numpy as np
-#cimport numpy as np
 from cython cimport boundscheck, wraparound
 from libc.math cimport exp
-
-#ctypedef np.float64_t DTYPE_t
 
 @boundscheck(False)
 @wraparound(False)
