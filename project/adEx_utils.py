@@ -91,23 +91,36 @@ def Iapp(t:float,
         # Fig 3D - rebound spike
         return -800 if 10 < t < 410 else 0
 
-def forward_euler(ADEX:callable, y0:tuple[float, float], dt:float, model_params:dict, ts:np.ndarray, currents:np.ndarray):
+@nb.njit(fastmath = True)
+def forward_euler(y0:tuple[float, float], dt:float, 
+                  model_params:tuple[float,...], reset_params:tuple[float,...],
+                  ts:np.ndarray, currents:np.ndarray):
     V, w = y0
-    Vout = np.zeros_like(ts)
-    wout = np.zeros_like(ts)
-    spts = np.zeros_like(ts, dtype=bool)
+    Vout = np.zeros(ts.size, dtype=np.float64)
+    wout = np.zeros(ts.size, dtype=np.float64)
+    spts = np.zeros(ts.size, dtype=np.bool)
 
+    # unpack reset parameters
+    Vpeak, Vreset, b = reset_params
+    C, gL, EL, VT, DeltaT, tauw, a = model_params
     for i, t in enumerate(ts):
-        dV, dw = ADEX(t=t, y=[V, w], I = currents[i], params = model_params)
+        '''
+        Brette & Gerstner 2005 adEx neuron WITHOUT synapses
+        responding to input current
+        '''
+        dV = (-gL * (V - EL) + gL * DeltaT * np.exp((V - VT)/DeltaT) - w + currents[i]) / C
+        dw = (a * (V - EL) - w) / tauw
+
+        # dV, dw = ADEX(t=t, y=(V, w), I = currents[i], params = model_params)
         # need to get change PER dt
         V2, w2 = V + dV*dt, w+dw*dt
         # spike
-        if V2 >= model_params['Vpeak']:
-            V2 = model_params['Vreset']
-            w2 = w + model_params['b']
+        if V2 >= Vpeak:
+            V2 = Vreset
+            w2 = w + b
             # Count spike occured at this time
             spts[i] = True
-            Vout[i-1] = model_params['Vpeak']
+            Vout[i-1] = Vpeak
         
         # save results
         V, w = V2, w2
@@ -118,20 +131,25 @@ def forward_euler(ADEX:callable, y0:tuple[float, float], dt:float, model_params:
 
 
 def run_experiment(adExModel:callable, Tmax:int, dt:float, model_params:dict, Iapp:callable, 
-                   plot:bool = False, simple:bool = False):
+                   plot:bool = False, simple:bool = True):
     '''
     Runs entire experiment for adEx model of choice with model and experimental parameters of choice
     '''        
-    y0 = [model_params['EL'], 0.0]
+    y0 = (model_params['EL'], 0.0)
     t0 = 0.0
+    ts = np.arange(t0, Tmax, dt, dtype=float)
+    all_curr = np.array([Iapp(t) for t in ts], dtype=float)
 
     # Clock-based simulator (constant step sizes), simple forward euler method
     if simple:
-        ts = np.arange(t0, Tmax, dt)
-        all_curr = np.array([Iapp(t) for t in ts], dtype=float)
-        V_all, w_all, spikes, t_all = forward_euler(ADEX=adExModel, y0=y0, dt=dt,
-                                                    model_params=model_params, ts= ts, 
+        model_tuple = tuple([model_params[par] for par in ['C', 'gL', 'EL', 'VT', 'DeltaT', 'tauw', 'a']])
+        reset_tuple = tuple([model_params[par] for par in ['Vpeak', 'Vreset', 'b']])
+        V_all, w_all, spikes, t_all = forward_euler(y0=y0, dt=dt,
+                                                    model_params=model_tuple, 
+                                                    reset_params=reset_tuple,
+                                                    ts= ts, 
                                                     currents=all_curr)
+        # spikes = np.array(spikes, dtype=bool)
         spike_times = t_all[spikes]
     
     # Event-based simulator (adaptive step sizes)
